@@ -44,6 +44,7 @@ error[invalid-assignment]: Object of type `DoesNotHaveCheck` is not assignable t
 10 | class CheckWithWrongSignature:
 11 |     def check(self, x: int, y: bytes) -> bool:
    |
+info: protocol member `check` is not defined
 info: rule `invalid-assignment` is enabled by default
 
 ```
@@ -59,7 +60,8 @@ error[invalid-assignment]: Object of type `CheckWithWrongSignature` is not assig
    |             Declared type
    |
 info: type `str` is not assignable to `bytes`
-info: └── while comparing parameter types
+info: ├── while comparing parameter types
+info: └── while checking protocol member `check`
 info: rule `invalid-assignment` is enabled by default
 
 ```
