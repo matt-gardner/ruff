@@ -249,6 +249,23 @@ def _(source: Incompatible):
     target: SupportsCheck = source  # error: [invalid-assignment]
 ```
 
+## Failures for multiple union elements
+
+```py
+from typing import Protocol
+
+class SupportsFoo(Protocol):
+    def foo(self, x: int) -> bool: ...
+
+class SupportsBar(Protocol):
+    def bar(self, x: str) -> bool: ...
+
+class HasNeither: ...
+
+def _(source: HasNeither):
+    target: SupportsFoo | SupportsBar = source  # error: [invalid-assignment]
+```
+
 ## Invariant generic classes
 
 We show a special diagnostic hint for invariant generic classes. For example, if you try to assign a
