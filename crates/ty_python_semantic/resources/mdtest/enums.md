@@ -1410,6 +1410,103 @@ reveal_type(Mixed.B.value)  # revealed: Literal[11]
 reveal_type(Mixed.C.value)  # revealed: Literal[12]
 ```
 
+### Duplicate values create aliases
+
+If a functional enum repeats a value, the later name is an alias rather than a distinct member:
+
+```py
+from enum import Enum
+from ty_extensions import enum_members
+
+DictAlias = Enum("DictAlias", {"A": 1, "B": 1})
+
+# TODO: This should ideally be `tuple[Literal["A"]]`.
+# revealed: tuple[Literal["A"], Literal["B"]]
+reveal_type(enum_members(DictAlias))
+
+reveal_type(DictAlias.A)  # revealed: Literal[DictAlias.A]
+# TODO: This should ideally be `Literal[DictAlias.A]`.
+reveal_type(DictAlias.B)  # revealed: Literal[DictAlias.B]
+
+PairsAlias = Enum("PairsAlias", [("A", 1), ("B", 1)])
+
+# TODO: This should ideally be `tuple[Literal["A"]]`.
+# revealed: tuple[Literal["A"], Literal["B"]]
+reveal_type(enum_members(PairsAlias))
+
+reveal_type(PairsAlias.A)  # revealed: Literal[PairsAlias.A]
+# TODO: This should ideally be `Literal[PairsAlias.A]`.
+reveal_type(PairsAlias.B)  # revealed: Literal[PairsAlias.B]
+
+class StaticAlias(Enum):
+    A = 1
+    B = 1
+
+# revealed: tuple[Literal["A"]]
+reveal_type(enum_members(StaticAlias))
+
+reveal_type(StaticAlias.B.value)  # revealed: Literal[1]
+reveal_type(StaticAlias.B.name)  # revealed: Literal["A"]
+```
+
+### `auto()` in tuple/list entries
+
+`auto()` should also expand in tuple/list entry forms of the functional syntax:
+
+```py
+from enum import Enum, Flag, auto
+
+Color = Enum("Color", [("RED", auto()), ("GREEN", auto())])
+
+# TODO: These should ideally be `Literal[1]` and `Literal[2]`.
+reveal_type(Color.RED.value)  # revealed: auto
+reveal_type(Color.GREEN.value)  # revealed: auto
+
+Perm = Flag("Perm", (("READ", auto()), ("WRITE", auto())))
+
+# TODO: These should ideally be `Literal[1]` and `Literal[2]`.
+reveal_type(Perm.READ.value)  # revealed: auto
+reveal_type(Perm.WRITE.value)  # revealed: auto
+
+class StaticColor(Enum):
+    RED = auto()
+    GREEN = auto()
+
+reveal_type(StaticColor.RED.value)  # revealed: Literal[1]
+reveal_type(StaticColor.GREEN.value)  # revealed: Literal[2]
+
+class StaticPerm(Flag):
+    READ = auto()
+    WRITE = auto()
+
+reveal_type(StaticPerm.READ.value)  # revealed: int
+reveal_type(StaticPerm.WRITE.value)  # revealed: int
+```
+
+### Dict mapping with `auto()` after non-literal values
+
+If a dict-form functional enum uses `auto()` after a non-literal explicit value, the generated value
+needs to widen:
+
+```py
+from enum import Enum, auto
+
+def f(n: int):
+    Dynamic = Enum("Dynamic", {"A": n, "B": auto()})
+
+    reveal_type(Dynamic.A.value)  # revealed: int
+    # TODO: This should ideally be `int`.
+    reveal_type(Dynamic.B.value)  # revealed: Literal[1]
+
+    class StaticDynamic(Enum):
+        A = n
+        B = auto()
+
+    reveal_type(StaticDynamic.A.value)  # revealed: int
+    # TODO: This should ideally be `int`.
+    reveal_type(StaticDynamic.B.value)  # revealed: Literal[1]
+```
+
 ### Duplicate member names
 
 Duplicate member names raise `TypeError` at runtime. We degrade to unknown members rather than
@@ -1485,6 +1582,22 @@ from enum import Enum
 Color = Enum("Color", "RED GREEN BLUE", bad_kwarg=True)
 ```
 
+### Keyword argument type validation
+
+Functional enum construction should still preserve overload-based argument validation:
+
+There isn't a static-class analogue here; the regression is specific to the functional constructor
+path bypassing the normal overload binder.
+
+```py
+from enum import Enum
+
+# TODO: This should ideally emit `error: [invalid-argument-type]`.
+Color = Enum("Color", "RED", start="0")
+
+reveal_type(Color.RED.value)  # revealed: Literal[1]
+```
+
 ### `boundary` keyword (Python 3.11+)
 
 #### Available on 3.11+
@@ -1556,6 +1669,44 @@ Http = Enum("Http", "OK NOT_FOUND", type=int)
 
 reveal_type(Http.OK.value)  # revealed: Literal[1]
 reveal_type(Http.NOT_FOUND.value)  # revealed: Literal[2]
+```
+
+Functional enums should still validate `type=` arguments eagerly, both for obvious non-types and for
+bases that are structurally invalid to combine with `Enum`:
+
+```py
+from enum import Enum
+from typing import TypedDict
+
+# error: [invalid-argument-type]
+BadType = Enum("BadType", "RED", type=1)
+
+# error: [invalid-argument-type]
+BadStringType = Enum("BadStringType", "RED", type="Mixin")
+
+TD = TypedDict("TD", {"x": int})
+
+# error: [invalid-base]
+BadBase = Enum("BadBase", "RED", type=TD)
+```
+
+Functional enums with a `type=` mixin should also have the same MRO as the equivalent static enum
+class:
+
+```py
+from enum import Enum
+from ty_extensions import reveal_mro
+
+Http = Enum("Http", "OK NOT_FOUND", type=int)
+
+# TODO: This should ideally match `StaticHttp`.
+reveal_mro(Http)  # revealed: (<class 'Http'>, <class 'int'>, <class 'object'><class 'Enum'>, <class 'object'>)
+
+class StaticHttp(int, Enum):
+    OK = 1
+    NOT_FOUND = 2
+
+reveal_mro(StaticHttp)  # revealed: (<class 'StaticHttp'>, <class 'int'>, <class 'Enum'>, <class 'object'>)
 ```
 
 ### IntEnum function syntax
