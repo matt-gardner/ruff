@@ -32,11 +32,12 @@ use ty_combine::Combine;
 use ty_module_resolver::{
     ModuleGlobSet, ModuleGlobSetBuilder, SearchPathSettings, SearchPathSettingsError, SearchPaths,
 };
+use ty_python_semantic::AnalysisSettings;
 use ty_python_semantic::lint::{Level, LintSource, RuleSelection};
-use ty_python_semantic::{
-    AnalysisSettings, MisconfigurationStrategy, ProgramSettings, PythonEnvironment, PythonPlatform,
-    PythonVersionFileSource, PythonVersionSource, PythonVersionWithSource, SitePackagesPaths,
-    SysPrefixPathOrigin,
+use ty_semantic_index::program::{MisconfigurationStrategy, ProgramSettings};
+use ty_site_packages::{
+    PythonEnvironment, PythonPlatform, PythonVersionFileSource, PythonVersionSource,
+    PythonVersionWithSource, SitePackagesPaths, SysPrefixPathOrigin,
 };
 use ty_static::EnvVars;
 
@@ -214,7 +215,7 @@ impl Options {
         let self_environment = self_environment_search_paths(
             python_environment
                 .as_ref()
-                .map(ty_python_semantic::PythonEnvironment::origin)
+                .map(ty_site_packages::PythonEnvironment::origin)
                 .cloned(),
             system,
         );

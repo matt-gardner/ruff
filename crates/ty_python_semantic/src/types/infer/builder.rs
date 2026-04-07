@@ -19,6 +19,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 use strum::IntoEnumIterator;
 use ty_module_resolver::{KnownModule, ModuleName, resolve_module};
+use ty_semantic_index::ast_ids::HasScopedUseId;
 
 use super::{
     DefinitionInference, DefinitionInferenceExtra, ExpressionInference, ExpressionInferenceExtra,
@@ -27,7 +28,6 @@ use super::{
     infer_same_file_expression_type, infer_unpack_types,
 };
 use crate::diagnostic::format_enumeration;
-use crate::node_key::NodeKey;
 use crate::place::{
     ConsideredDefinitions, DefinedPlace, Definedness, LookupError, Place, PlaceAndQualifiers,
     TypeOrigin, builtins_module_scope, builtins_symbol, class_body_implicit_symbol,
@@ -35,23 +35,7 @@ use crate::place::{
     module_type_implicit_global_declaration, module_type_implicit_global_symbol, place,
     place_from_bindings, place_from_declarations, typing_extensions_symbol,
 };
-use crate::semantic_index::ast_ids::node_key::ExpressionNodeKey;
-use crate::semantic_index::ast_ids::{HasScopedUseId, ScopedUseId};
-use crate::semantic_index::definition::{
-    AnnotatedAssignmentDefinitionKind, AssignmentDefinitionKind, ComprehensionDefinitionKind,
-    Definition, DefinitionKind, DefinitionNodeKey, DefinitionState, ExceptHandlerDefinitionKind,
-    ForStmtDefinitionKind, LoopHeaderDefinitionKind, TargetKind, WithItemDefinitionKind,
-};
-use crate::semantic_index::expression::{Expression, ExpressionKind};
-use crate::semantic_index::narrowing_constraints::ConstraintKey;
-use crate::semantic_index::place::{PlaceExpr, PlaceExprRef};
-use crate::semantic_index::scope::{
-    FileScopeId, NodeWithScopeKind, NodeWithScopeRef, ScopeId, ScopeKind,
-};
-use crate::semantic_index::symbol::{ScopedSymbolId, Symbol};
-use crate::semantic_index::{
-    ApplicableConstraints, EnclosingSnapshotResult, SemanticIndex, place_table,
-};
+use crate::reachability_constraints::evaluate_reachability_constraint;
 use crate::types::add_inferred_python_version_hint_to_diagnostic;
 use crate::types::call::bind::MatchingOverloadIndex;
 use crate::types::call::{Binding, Bindings, CallArguments, CallError, CallErrorKind};
@@ -89,6 +73,7 @@ use crate::types::generics::{InferableTypeVars, SpecializationBuilder, bind_type
 use crate::types::infer::builder::named_tuple::NamedTupleKind;
 use crate::types::infer::builder::paramspec_validation::validate_paramspec_components;
 use crate::types::infer::{nearest_enclosing_class, nearest_enclosing_function};
+use crate::types::narrow::evaluate_narrowing_constraint;
 use crate::types::newtype::NewType;
 use crate::types::set_theoretic::RecursivelyDefined;
 use crate::types::signatures::CallableSignature;
@@ -99,16 +84,33 @@ use crate::types::type_alias::{ManualPEP695TypeAliasType, PEP695TypeAliasType};
 use crate::types::typevar::{BoundTypeVarIdentity, TypeVarConstraints, TypeVarIdentity};
 use crate::types::{
     CallDunderError, CallableBinding, CallableType, CallableTypes, ClassType, DynamicType,
-    EvaluationMode, InferenceFlags, InternedConstraintSet, InternedType, IntersectionBuilder,
-    IntersectionType, KnownClass, KnownInstanceType, KnownUnion, LiteralValueTypeKind,
-    MemberLookupPolicy, ParamSpecAttrKind, Parameter, ParameterForm, Parameters, Signature,
-    SpecialFormType, SubclassOfType, Truthiness, Type, TypeAliasType, TypeAndQualifiers,
-    TypeContext, TypeQualifiers, TypeVarBoundOrConstraints, TypeVarKind, TypeVarVariance,
-    TypedDictType, UnionBuilder, UnionType, binding_type, infer_complete_scope_types,
-    infer_scope_types, todo_type,
+    InferenceFlags, InternedConstraintSet, InternedType, IntersectionBuilder, IntersectionType,
+    KnownClass, KnownInstanceType, KnownUnion, LiteralValueTypeKind, MemberLookupPolicy,
+    ParamSpecAttrKind, Parameter, ParameterForm, Parameters, Signature, SpecialFormType,
+    SubclassOfType, Type, TypeAliasType, TypeAndQualifiers, TypeContext, TypeQualifiers,
+    TypeVarBoundOrConstraints, TypeVarKind, TypeVarVariance, TypedDictType, UnionBuilder,
+    UnionType, binding_type, infer_complete_scope_types, infer_scope_types, todo_type,
 };
-use crate::unpack::UnpackPosition;
 use crate::{AnalysisSettings, Db, FxIndexSet, Program};
+use ty_semantic_index::ExpressionNodeKey;
+use ty_semantic_index::ast_ids::ScopedUseId;
+use ty_semantic_index::definition::{
+    AnnotatedAssignmentDefinitionKind, AssignmentDefinitionKind, ComprehensionDefinitionKind,
+    Definition, DefinitionKind, DefinitionNodeKey, DefinitionState, ExceptHandlerDefinitionKind,
+    ForStmtDefinitionKind, LoopHeaderDefinitionKind, TargetKind, WithItemDefinitionKind,
+};
+use ty_semantic_index::expression::{Expression, ExpressionKind};
+use ty_semantic_index::narrowing_constraints::ConstraintKey;
+use ty_semantic_index::node_key::NodeKey;
+use ty_semantic_index::place::{PlaceExpr, PlaceExprRef};
+use ty_semantic_index::scope::{
+    FileScopeId, NodeWithScopeKind, NodeWithScopeRef, ScopeId, ScopeKind,
+};
+use ty_semantic_index::symbol::{ScopedSymbolId, Symbol};
+use ty_semantic_index::{
+    ApplicableConstraints, EnclosingSnapshotResult, SemanticIndex, place_table,
+};
+use ty_semantic_index::{EvaluationMode, Truthiness, unpack::UnpackPosition};
 
 mod annotation_expression;
 mod binary_expressions;
@@ -800,7 +802,7 @@ impl<'db, 'ast> TypeInferenceBuilder<'db, 'ast> {
                 self.infer_dict_key_assignment_definition(
                     dict_key_assignment.key(self.module()),
                     dict_key_assignment.value(self.module()),
-                    dict_key_assignment.assignment,
+                    dict_key_assignment.assignment(),
                     definition,
                 );
             }
@@ -1804,9 +1806,12 @@ impl<'db, 'ast> TypeInferenceBuilder<'db, 'ast> {
 
         for reachable_binding in &loop_header.reachable_bindings {
             let binding_ty = binding_type(db, reachable_binding.definition);
-            let narrowed_ty = use_def
-                .narrowing_evaluator(reachable_binding.narrowing_constraint)
-                .narrow(db, binding_ty, place);
+            let narrowed_ty = evaluate_narrowing_constraint(
+                db,
+                &use_def.narrowing_evaluator(reachable_binding.narrowing_constraint),
+                binding_ty,
+                place,
+            );
 
             union.add_in_place(narrowed_ty);
         }
@@ -7154,7 +7159,7 @@ impl<'db, 'ast> TypeInferenceBuilder<'db, 'ast> {
                 self.index,
             ) {
                 ApplicableConstraints::UnboundBinding(constraint) => {
-                    ty = constraint.narrow(db, ty, place);
+                    ty = evaluate_narrowing_constraint(db, &constraint, ty, place);
                 }
                 // Performs narrowing based on constrained bindings.
                 // This handling must be performed even if narrowing is attempted and failed using `infer_place_load`.
@@ -7176,8 +7181,9 @@ impl<'db, 'ast> TypeInferenceBuilder<'db, 'ast> {
                     let predicates = bindings.predicates;
                     let mut union = UnionBuilder::new(db);
                     for binding in bindings {
-                        let static_reachability = reachability_constraints.evaluate(
+                        let static_reachability = evaluate_reachability_constraint(
                             db,
+                            reachability_constraints,
                             predicates,
                             binding.reachability_constraint,
                         );
@@ -7187,13 +7193,20 @@ impl<'db, 'ast> TypeInferenceBuilder<'db, 'ast> {
                         match binding.binding {
                             DefinitionState::Defined(definition) => {
                                 let binding_ty = binding_type(db, definition);
-                                union = union.add(
-                                    binding.narrowing_constraint.narrow(db, binding_ty, place),
-                                );
+                                union = union.add(evaluate_narrowing_constraint(
+                                    db,
+                                    &binding.narrowing_constraint,
+                                    binding_ty,
+                                    place,
+                                ));
                             }
                             DefinitionState::Undefined | DefinitionState::Deleted => {
-                                union =
-                                    union.add(binding.narrowing_constraint.narrow(db, ty, place));
+                                union = union.add(evaluate_narrowing_constraint(
+                                    db,
+                                    &binding.narrowing_constraint,
+                                    ty,
+                                    place,
+                                ));
                             }
                         }
                     }
@@ -8227,14 +8240,15 @@ impl<'db, 'ast> TypeInferenceBuilder<'db, 'ast> {
                 ))
             }
 
-            (ast::UnaryOp::Not, ty) => ty
-                .try_bool(self.db())
-                .unwrap_or_else(|err| {
-                    err.report_diagnostic(&self.context, unary);
-                    err.fallback_truthiness()
-                })
-                .negate()
-                .into_type(self.db()),
+            (ast::UnaryOp::Not, ty) => Type::from_truthiness(
+                self.db(),
+                ty.try_bool(self.db())
+                    .unwrap_or_else(|err| {
+                        err.report_diagnostic(&self.context, unary);
+                        err.fallback_truthiness()
+                    })
+                    .negate(),
+            ),
             // Handle constrained TypeVars specially: check each constraint individually.
             //
             // TODO: We expect to replace this with more general support once we migrate to the new

@@ -10,10 +10,6 @@ use crate::suppression::{
 };
 pub use db::Db;
 pub use diagnostic::add_inferred_python_version_hint_to_diagnostic;
-pub use program::{
-    FallibleStrategy, MisconfigurationStrategy, Program, ProgramSettings, UseDefaultStrategy,
-};
-pub use python_platform::PythonPlatform;
 use rustc_hash::FxHasher;
 pub use semantic_model::{
     Completion, HasDefinition, HasOptionalDefinition, HasType, MemberDefinition, NameKind,
@@ -23,10 +19,8 @@ pub use suppression::{
     UNUSED_IGNORE_COMMENT, is_unused_ignore_comment_lint, suppress_all, suppress_single,
 };
 use ty_module_resolver::ModuleGlobSet;
-pub use ty_site_packages::{
-    PythonEnvironment, PythonVersionFileSource, PythonVersionSource, PythonVersionWithSource,
-    SitePackagesPaths, SysPrefixPathOrigin,
-};
+use ty_semantic_index::program::Program;
+use ty_site_packages::{PythonPlatform, PythonVersionSource, PythonVersionWithSource};
 pub use types::ide_support::{
     ImportAliasResolution, ResolvedDefinition, TypeHierarchyClass, definitions_for_attribute,
     definitions_for_bin_op, definitions_for_imported_symbol, definitions_for_name,
@@ -35,21 +29,15 @@ pub use types::ide_support::{
 };
 pub use types::{DisplaySettings, TypeQualifiers};
 
-pub mod ast_node_ref;
 mod db;
 mod dunder_all;
 pub mod lint;
-mod node_key;
 pub(crate) mod place;
-mod program;
-mod python_platform;
-mod rank;
-pub mod semantic_index;
+mod reachability_constraints;
 mod semantic_model;
 mod subscript;
 mod suppression;
 pub mod types;
-mod unpack;
 
 mod diagnostic;
 #[cfg(feature = "testing")]

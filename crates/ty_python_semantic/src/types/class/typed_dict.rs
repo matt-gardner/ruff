@@ -10,8 +10,6 @@ use ruff_text_size::{Ranged, TextRange};
 
 use crate::Db;
 use crate::place::PlaceAndQualifiers;
-use crate::semantic_index::definition::Definition;
-use crate::semantic_index::scope::ScopeId;
 use crate::types::callable::CallableTypeKind;
 use crate::types::generics::GenericContext;
 use crate::types::member::Member;
@@ -25,6 +23,8 @@ use crate::types::{
     MemberLookupPolicy, Type, TypeContext, TypeMapping, TypeVarVariance, UnionType,
     determine_upper_bound,
 };
+use ty_semantic_index::definition::Definition;
+use ty_semantic_index::scope::ScopeId;
 
 pub(super) fn synthesize_typed_dict_method<'db, I, N, F>(
     db: &'db dyn Db,

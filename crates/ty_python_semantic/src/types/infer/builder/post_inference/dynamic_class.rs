@@ -1,5 +1,5 @@
 use crate::{
-    semantic_index::definition::{Definition, DefinitionKind},
+    types::infer::builder::dynamic_class::report_dynamic_mro_errors,
     types::{
         ClassLiteral, Type, binding_type,
         class::{DynamicClassAnchor, DynamicMetaclassConflict, dynamic_class_bases_argument},
@@ -8,9 +8,9 @@ use crate::{
             IncompatibleBases, report_conflicting_metaclass_from_bases,
             report_instance_layout_conflict,
         },
-        infer::builder::dynamic_class::report_dynamic_mro_errors,
     },
 };
+use ty_semantic_index::definition::{Definition, DefinitionKind};
 
 /// Iterate over all dynamic class definitions (created using `type()` calls) to check that
 /// the definition will not cause an exception to be raised at runtime. This needs to be done

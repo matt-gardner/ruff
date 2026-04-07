@@ -7,21 +7,24 @@ use ty_module_resolver::{
 };
 
 use crate::dunder_all::dunder_all_names;
-use crate::semantic_index::definition::{Definition, DefinitionKind, DefinitionState};
-use crate::semantic_index::narrowing_constraints::ScopedNarrowingConstraint;
-use crate::semantic_index::place::{PlaceExprRef, ScopedPlaceId};
-use crate::semantic_index::predicate::{Predicate, ScopedPredicateId};
-use crate::semantic_index::scope::ScopeId;
-use crate::semantic_index::{
-    BindingWithConstraints, BindingWithConstraintsIterator, DeclarationsIterator,
-    ReachabilityConstraints, get_loop_header, place_table,
-};
-use crate::semantic_index::{DeclarationWithConstraint, global_scope, use_def_map};
+use crate::reachability_constraints::{evaluate_reachability, evaluate_reachability_constraint};
+use crate::types::narrow::evaluate_narrowing_constraint;
 use crate::types::{
-    DynamicType, KnownClass, MemberLookupPolicy, Truthiness, Type, TypeAndQualifiers,
-    TypeQualifiers, UnionBuilder, UnionType, binding_type, declaration_type,
+    DynamicType, KnownClass, MemberLookupPolicy, Type, TypeAndQualifiers, TypeQualifiers,
+    UnionBuilder, UnionType, binding_type, declaration_type,
 };
 use crate::{Db, FxIndexSet, FxOrderSet, Program};
+use ty_semantic_index::definition::{Definition, DefinitionKind, DefinitionState};
+use ty_semantic_index::narrowing_constraints::ScopedNarrowingConstraint;
+use ty_semantic_index::place::{PlaceExprRef, ScopedPlaceId};
+use ty_semantic_index::predicate::{Predicate, ScopedPredicateId};
+use ty_semantic_index::reachability_constraints::ReachabilityConstraints;
+use ty_semantic_index::scope::ScopeId;
+use ty_semantic_index::{
+    BindingWithConstraints, BindingWithConstraintsIterator, BoundnessAnalysis,
+    DeclarationsIterator, Truthiness, get_loop_header, place_table,
+};
+use ty_semantic_index::{DeclarationWithConstraint, global_scope, use_def_map};
 
 pub(crate) use implicit_globals::{
     module_type_implicit_global_declaration, module_type_implicit_global_symbol,
@@ -1110,7 +1113,12 @@ impl<'db> DeclarationsBoundnessEvaluator<'_, 'db> {
                         is_non_exported(db, def, requires_explicit_reexport)
                     }) =>
                     {
-                        reachability_constraints.evaluate(db, predicates, reachability_constraint)
+                        evaluate_reachability_constraint(
+                            db,
+                            reachability_constraints,
+                            predicates,
+                            reachability_constraint,
+                        )
                     }
                     _ => Truthiness::AlwaysFalse,
                 };
@@ -1247,7 +1255,7 @@ fn loop_header_reachability_impl<'db>(
         let reachability = if is_cycle_initial {
             Truthiness::Ambiguous
         } else {
-            use_def.evaluate_reachability(db, live_binding.reachability_constraint)
+            evaluate_reachability(db, use_def, live_binding.reachability_constraint)
         };
         // Skip unreachable bindings.
         if reachability.is_always_false() {
@@ -1354,7 +1362,12 @@ fn place_from_bindings_impl<'db>(
     // expressions, which is extra work and can lead to cycles.
     let unbound_visibility = || {
         unbound_reachability_constraint.map(|reachability_constraint| {
-            reachability_constraints.evaluate(db, predicates, reachability_constraint)
+            evaluate_reachability_constraint(
+                db,
+                reachability_constraints,
+                predicates,
+                reachability_constraint,
+            )
         })
     };
 
@@ -1374,7 +1387,12 @@ fn place_from_bindings_impl<'db>(
                 }
                 DefinitionState::Deleted => {
                     deleted_reachability = deleted_reachability.or_else(|| {
-                        reachability_constraints.evaluate(db, predicates, reachability_constraint)
+                        evaluate_reachability_constraint(
+                            db,
+                            reachability_constraints,
+                            predicates,
+                            reachability_constraint,
+                        )
                     });
                     return None;
                 }
@@ -1384,8 +1402,12 @@ fn place_from_bindings_impl<'db>(
                 return None;
             }
 
-            let static_reachability =
-                reachability_constraints.evaluate(db, predicates, reachability_constraint);
+            let static_reachability = evaluate_reachability_constraint(
+                db,
+                reachability_constraints,
+                predicates,
+                reachability_constraint,
+            );
 
             if static_reachability.is_always_false() {
                 // If the static reachability evaluates to false, the binding is either not reachable
@@ -1460,7 +1482,12 @@ fn place_from_bindings_impl<'db>(
 
             first_definition.get_or_insert(binding);
             let binding_ty = binding_type(db, binding);
-            Some(narrowing_constraint.narrow(db, binding_ty, binding.place(db)))
+            Some(evaluate_narrowing_constraint(
+                db,
+                &narrowing_constraint,
+                binding_ty,
+                binding.place(db),
+            ))
         },
     );
 
@@ -1689,9 +1716,12 @@ fn place_from_declarations_impl<'db>(
         }
 
         first_declaration.get_or_insert(declaration);
-
-        let static_reachability =
-            reachability_constraints.evaluate(db, predicates, reachability_constraint);
+        let static_reachability = evaluate_reachability_constraint(
+            db,
+            reachability_constraints,
+            predicates,
+            reachability_constraint,
+        );
 
         if static_reachability.is_always_false() {
             None
@@ -1776,12 +1806,12 @@ pub(crate) mod implicit_globals {
     use crate::Program;
     use crate::db::Db;
     use crate::place::{Definedness, PlaceAndQualifiers};
-    use crate::semantic_index::symbol::Symbol;
-    use crate::semantic_index::{place_table, use_def_map};
     use crate::types::{
         ClassLiteral, KnownClass, MemberLookupPolicy, Parameter, Parameters, Signature, Type,
     };
     use ruff_python_ast::PythonVersion;
+    use ty_semantic_index::symbol::Symbol;
+    use ty_semantic_index::{place_table, use_def_map};
 
     use super::{DefinedPlace, Place, place_from_declarations};
 
@@ -2056,26 +2086,6 @@ pub(crate) enum ConsideredDefinitions {
     EndOfScope,
     /// Consider all definitions that are reachable from the start of the scope.
     AllReachable,
-}
-
-/// Specifies how the boundness of a place should be determined.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
-pub(crate) enum BoundnessAnalysis {
-    /// The place is always considered bound.
-    AssumeBound,
-    /// The boundness of the place is determined based on the visibility of the implicit
-    /// `unbound` binding. In the example below, when analyzing the visibility of the
-    /// `x = <unbound>` binding from the position of the end of the scope, it would be
-    /// `Truthiness::Ambiguous`, because it could either be visible or not, depending on the
-    /// `flag()` return value. This would result in a `Definedness::PossiblyUndefined` for `x`.
-    ///
-    /// ```py
-    /// x = <unbound>
-    ///
-    /// if flag():
-    ///     x = 1
-    /// ```
-    BasedOnUnboundVisibility,
 }
 
 #[cfg(test)]

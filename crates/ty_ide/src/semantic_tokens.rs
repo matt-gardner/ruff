@@ -43,17 +43,14 @@ use ruff_python_ast::{
 };
 use ruff_text_size::{Ranged, TextLen, TextRange, TextSize};
 use std::ops::Deref;
-use ty_python_semantic::semantic_index::definition::Definition;
-use ty_python_semantic::types::TypeVarKind;
+use ty_python_semantic::types::ide_support::{CallArgumentForm, call_argument_forms};
+use ty_python_semantic::types::{SpecialFormType, TypeVarKind};
 use ty_python_semantic::{
     HasType, SemanticModel,
-    semantic_index::definition::DefinitionKind,
-    types::ide_support::{
-        CallArgumentForm, call_argument_forms, definition_for_name,
-        static_member_type_for_attribute,
-    },
-    types::{SpecialFormType, Type},
+    types::Type,
+    types::ide_support::{definition_for_name, static_member_type_for_attribute},
 };
+use ty_semantic_index::definition::{Definition, DefinitionKind};
 
 /// Semantic token types supported by the language server.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

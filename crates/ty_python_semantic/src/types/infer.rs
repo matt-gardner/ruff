@@ -44,11 +44,6 @@ use salsa;
 use salsa::plumbing::AsId;
 
 use crate::Db;
-use crate::semantic_index::ast_ids::node_key::ExpressionNodeKey;
-use crate::semantic_index::definition::Definition;
-use crate::semantic_index::expression::Expression;
-use crate::semantic_index::scope::ScopeId;
-use crate::semantic_index::{SemanticIndex, semantic_index};
 use crate::types::diagnostic::TypeCheckDiagnostics;
 use crate::types::function::{FunctionDecorators, FunctionType};
 use crate::types::generics::Specialization;
@@ -57,9 +52,14 @@ use crate::types::{
     ClassLiteral, KnownClass, StaticClassLiteral, Type, TypeAndQualifiers, TypeQualifiers,
     declaration_type,
 };
-use crate::unpack::Unpack;
 use builder::TypeInferenceBuilder;
 pub(super) use comparisons::UnsupportedComparisonError;
+use ty_semantic_index::ExpressionNodeKey;
+use ty_semantic_index::definition::Definition;
+use ty_semantic_index::expression::Expression;
+use ty_semantic_index::scope::ScopeId;
+use ty_semantic_index::unpack::Unpack;
+use ty_semantic_index::{SemanticIndex, semantic_index};
 
 mod builder;
 mod comparisons;

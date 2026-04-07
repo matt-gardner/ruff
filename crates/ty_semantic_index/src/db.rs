@@ -1,36 +1,23 @@
-use crate::AnalysisSettings;
-use crate::lint::{LintRegistry, RuleSelection};
 use ruff_db::files::File;
-use ty_semantic_index::Db as SemanticIndexDb;
+use ty_module_resolver::Db as ModuleResolverDb;
 
 /// Database giving access to semantic information about a Python program.
 #[salsa::db]
-pub trait Db: SemanticIndexDb {
-    /// Resolves the rule selection for a given file.
-    fn rule_selection(&self, file: File) -> &RuleSelection;
-
-    fn lint_registry(&self) -> &LintRegistry;
-
-    fn analysis_settings(&self, file: File) -> &AnalysisSettings;
-
-    /// Whether ty is running with logging verbosity INFO or higher (`-v` or more).
-    fn verbose(&self) -> bool;
+pub trait Db: ModuleResolverDb {
+    /// Returns `true` if the file should be checked.
+    fn should_check_file(&self, file: File) -> bool;
 }
 
 #[cfg(test)]
 pub(crate) mod tests {
     use std::sync::{Arc, Mutex};
 
-    use crate::{
-        AnalysisSettings, PythonVersionSource, PythonVersionWithSource, default_lint_registry,
-    };
-    use ty_module_resolver::SearchPathSettings;
-    use ty_semantic_index::program::Program;
-    use ty_semantic_index::program::{FallibleStrategy, ProgramSettings};
-    use ty_site_packages::PythonPlatform;
+    use ty_module_resolver::{FallibleStrategy, SearchPathSettings};
+    use ty_site_packages::{PythonPlatform, PythonVersionSource, PythonVersionWithSource};
+
+    use crate::program::{Program, ProgramSettings};
 
     use super::Db;
-    use crate::lint::{LintRegistry, RuleSelection};
     use anyhow::Context;
     use ruff_db::Db as SourceDb;
     use ruff_db::files::{File, Files};
@@ -51,9 +38,6 @@ pub(crate) mod tests {
         files: Files,
         system: TestSystem,
         vendored: VendoredFileSystem,
-        events: Events,
-        rule_selection: Arc<RuleSelection>,
-        analysis_settings: Arc<AnalysisSettings>,
     }
 
     impl TestDb {
@@ -61,7 +45,6 @@ pub(crate) mod tests {
             let events = Events::default();
             Self {
                 storage: salsa::Storage::new(Some(Box::new({
-                    let events = events.clone();
                     move |event| {
                         tracing::trace!("event: {event:?}");
                         let mut events = events.lock().unwrap();
@@ -70,26 +53,8 @@ pub(crate) mod tests {
                 }))),
                 system: TestSystem::default(),
                 vendored: ty_vendored::file_system().clone(),
-                events,
                 files: Files::default(),
-                rule_selection: Arc::new(RuleSelection::from_registry(default_lint_registry())),
-                analysis_settings: AnalysisSettings::default().into(),
             }
-        }
-
-        /// Takes the salsa events.
-        pub(crate) fn take_salsa_events(&mut self) -> Vec<salsa::Event> {
-            let mut events = self.events.lock().unwrap();
-
-            std::mem::take(&mut *events)
-        }
-
-        /// Clears the salsa events.
-        ///
-        /// ## Panics
-        /// If there are any pending salsa snapshots.
-        pub(crate) fn clear_salsa_events(&mut self) {
-            self.take_salsa_events();
         }
     }
 
@@ -123,28 +88,9 @@ pub(crate) mod tests {
     }
 
     #[salsa::db]
-    impl ty_semantic_index::Db for TestDb {
+    impl Db for TestDb {
         fn should_check_file(&self, file: File) -> bool {
             !file.path(self).is_vendored_path()
-        }
-    }
-
-    #[salsa::db]
-    impl Db for TestDb {
-        fn rule_selection(&self, _file: File) -> &RuleSelection {
-            &self.rule_selection
-        }
-
-        fn lint_registry(&self) -> &LintRegistry {
-            default_lint_registry()
-        }
-
-        fn analysis_settings(&self, _file: File) -> &AnalysisSettings {
-            &self.analysis_settings
-        }
-
-        fn verbose(&self) -> bool {
-            false
         }
     }
 
@@ -174,11 +120,6 @@ pub(crate) mod tests {
                 python_platform: PythonPlatform::default(),
                 files: vec![],
             }
-        }
-
-        pub(crate) fn with_python_version(mut self, version: PythonVersion) -> Self {
-            self.python_version = version;
-            self
         }
 
         pub(crate) fn with_file(
@@ -215,9 +156,5 @@ pub(crate) mod tests {
 
             Ok(db)
         }
-    }
-
-    pub(crate) fn setup_db() -> TestDb {
-        TestDbBuilder::new().build().expect("valid TestDb setup")
     }
 }

@@ -16,9 +16,9 @@ use ruff_db::vendored::VendoredFileSystem;
 use salsa::{Database, Event, Setter};
 use ty_module_resolver::SearchPaths;
 use ty_python_semantic::lint::{LintRegistry, RuleSelection};
-use ty_python_semantic::{
-    AnalysisSettings, Db as SemanticDb, FallibleStrategy, MisconfigurationStrategy, Program,
-    UseDefaultStrategy,
+use ty_python_semantic::{AnalysisSettings, Db as SemanticDb};
+use ty_semantic_index::program::{
+    FallibleStrategy, MisconfigurationStrategy, Program, UseDefaultStrategy,
 };
 
 mod changes;
@@ -498,11 +498,6 @@ impl ty_module_resolver::Db for ProjectDatabase {
 
 #[salsa::db]
 impl SemanticDb for ProjectDatabase {
-    fn should_check_file(&self, file: File) -> bool {
-        self.project
-            .is_some_and(|project| project.should_check_file(self, file))
-    }
-
     fn rule_selection(&self, file: File) -> &RuleSelection {
         let settings = file_settings(self, file);
         settings.rules(self)
@@ -519,6 +514,14 @@ impl SemanticDb for ProjectDatabase {
 
     fn verbose(&self) -> bool {
         self.project().verbose(self)
+    }
+}
+
+#[salsa::db]
+impl ty_semantic_index::Db for ProjectDatabase {
+    fn should_check_file(&self, file: File) -> bool {
+        self.project
+            .is_some_and(|project| project.should_check_file(self, file))
     }
 }
 
@@ -580,11 +583,10 @@ pub(crate) mod tests {
     use ruff_db::vendored::VendoredFileSystem;
     use ruff_python_ast::PythonVersion;
     use ty_module_resolver::SearchPathSettings;
+    use ty_python_semantic::AnalysisSettings;
     use ty_python_semantic::lint::{LintRegistry, RuleSelection};
-    use ty_python_semantic::{
-        AnalysisSettings, FallibleStrategy, Program, ProgramSettings, PythonPlatform,
-        PythonVersionWithSource,
-    };
+    use ty_semantic_index::program::{FallibleStrategy, Program, ProgramSettings};
+    use ty_site_packages::{PythonPlatform, PythonVersionWithSource};
 
     use crate::db::Db;
     use crate::{Project, ProjectMetadata};
@@ -643,7 +645,7 @@ pub(crate) mod tests {
                 self,
                 ProgramSettings {
                     python_version: PythonVersionWithSource {
-                        source: ty_python_semantic::PythonVersionSource::Default,
+                        source: ty_site_packages::PythonVersionSource::Default,
                         version: python_version,
                     },
                     python_platform: PythonPlatform::default(),
@@ -703,11 +705,14 @@ pub(crate) mod tests {
     }
 
     #[salsa::db]
-    impl ty_python_semantic::Db for TestDb {
+    impl ty_semantic_index::Db for TestDb {
         fn should_check_file(&self, file: ruff_db::files::File) -> bool {
             !file.path(self).is_vendored_path()
         }
+    }
 
+    #[salsa::db]
+    impl ty_python_semantic::Db for TestDb {
         fn rule_selection(&self, _file: ruff_db::files::File) -> &RuleSelection {
             self.project().rules(self)
         }

@@ -1,6 +1,5 @@
 use crate::{
     Program,
-    semantic_index::{definition::Definition, scope::NodeWithScopeKind},
     types::{
         BindingContext, KnownClass, KnownInstanceType, LintDiagnosticGuard, Truthiness, Type,
         TypeContext, TypeVarBoundOrConstraints, TypeVarKind, TypeVarVariance,
@@ -27,6 +26,7 @@ use ruff_db::{
 };
 use ruff_python_ast::{self as ast, PythonVersion};
 use ruff_text_size::{Ranged, TextRange};
+use ty_semantic_index::{definition::Definition, scope::NodeWithScopeKind};
 
 impl<'db, 'ast> TypeInferenceBuilder<'db, 'ast> {
     pub(super) fn infer_typevar_definition(

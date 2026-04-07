@@ -509,9 +509,8 @@ mod tests {
     use ruff_python_trivia::textwrap::dedent;
     use ruff_source_file::OneIndexed;
     use ty_module_resolver::SearchPathSettings;
-    use ty_python_semantic::{
-        FallibleStrategy, Program, ProgramSettings, PythonPlatform, PythonVersionWithSource,
-    };
+    use ty_semantic_index::program::{FallibleStrategy, Program, ProgramSettings};
+    use ty_site_packages::{PythonPlatform, PythonVersionWithSource};
 
     fn get_assertions(source: &str) -> InlineFileAssertions {
         let mut db = Db::setup();

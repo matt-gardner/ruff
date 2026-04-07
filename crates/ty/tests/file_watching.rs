@@ -16,7 +16,7 @@ use ty_project::metadata::pyproject::{PyProject, Tool};
 use ty_project::metadata::value::{RangedValue, RelativePathBuf};
 use ty_project::watch::{ChangeEvent, ProjectWatcher, directory_watcher};
 use ty_project::{Db, ProjectDatabase, ProjectMetadata};
-use ty_python_semantic::PythonPlatform;
+use ty_site_packages::PythonPlatform;
 
 struct TestCase {
     db: ProjectDatabase,

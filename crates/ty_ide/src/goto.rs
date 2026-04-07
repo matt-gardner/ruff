@@ -13,7 +13,6 @@ use ruff_python_ast::{self as ast, AnyNodeRef, ExprRef};
 use ruff_text_size::{Ranged, TextRange, TextSize};
 
 use ty_python_semantic::ResolvedDefinition;
-use ty_python_semantic::semantic_index::definition::DefinitionKind;
 use ty_python_semantic::types::Type;
 use ty_python_semantic::types::ide_support::{
     call_signature_details, call_type_simplified_by_overloads, constructor_signature,
@@ -24,6 +23,7 @@ use ty_python_semantic::{
     HasDefinition, HasOptionalDefinition, HasType, ImportAliasResolution, SemanticModel,
     TypeQualifiers, definitions_for_imported_symbol, definitions_for_name,
 };
+use ty_semantic_index::definition::DefinitionKind;
 
 #[derive(Clone, Debug)]
 pub(crate) enum GotoTarget<'a> {

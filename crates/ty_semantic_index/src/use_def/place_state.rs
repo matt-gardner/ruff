@@ -46,15 +46,14 @@ use itertools::{EitherOrBoth, Itertools};
 use ruff_index::newtype_index;
 use smallvec::{SmallVec, smallvec};
 
-use crate::semantic_index::narrowing_constraints::ScopedNarrowingConstraint;
-use crate::semantic_index::reachability_constraints::{
-    ReachabilityConstraintsBuilder, ScopedReachabilityConstraintId,
-};
+use crate::ReachabilityConstraintsBuilder;
+use crate::narrowing_constraints::ScopedNarrowingConstraint;
+use crate::reachability_constraints::ScopedReachabilityConstraintId;
 
 /// A newtype-index for a definition in a particular scope.
 #[newtype_index]
 #[derive(Ord, PartialOrd, salsa::Update, get_size2::GetSize)]
-pub(crate) struct ScopedDefinitionId;
+pub struct ScopedDefinitionId;
 
 impl ScopedDefinitionId {
     /// A special ID that is used to describe an implicit start-of-scope state. When
@@ -87,7 +86,7 @@ pub(super) struct LiveDeclaration {
 pub(super) type LiveDeclarationsIterator<'a> = std::slice::Iter<'a, LiveDeclaration>;
 
 #[derive(Clone, Copy, Debug)]
-pub(in crate::semantic_index) enum PreviousDefinitions {
+pub(crate) enum PreviousDefinitions {
     AreShadowed,
     AreKept,
 }
@@ -220,10 +219,10 @@ impl Bindings {
 
 /// One of the live bindings for a single place at some point in control flow.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, salsa::Update, get_size2::GetSize)]
-pub(crate) struct LiveBinding {
-    pub(crate) binding: ScopedDefinitionId,
-    pub(crate) narrowing_constraint: ScopedNarrowingConstraint,
-    pub(crate) reachability_constraint: ScopedReachabilityConstraintId,
+pub struct LiveBinding {
+    pub binding: ScopedDefinitionId,
+    pub narrowing_constraint: ScopedNarrowingConstraint,
+    pub reachability_constraint: ScopedReachabilityConstraintId,
 }
 
 pub(super) type LiveBindingsIterator<'a> = std::slice::Iter<'a, LiveBinding>;
@@ -346,7 +345,7 @@ impl Bindings {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, get_size2::GetSize)]
-pub(in crate::semantic_index) struct PlaceState {
+pub(crate) struct PlaceState {
     declarations: Declarations,
     bindings: Bindings,
 }
@@ -444,7 +443,7 @@ mod tests {
     use super::*;
     use ruff_index::Idx;
 
-    use crate::semantic_index::predicate::ScopedPredicateId;
+    use crate::{ReachabilityConstraintsBuilder, predicate::ScopedPredicateId};
 
     #[track_caller]
     fn assert_bindings(place: &PlaceState, expected: &[(u32, ScopedNarrowingConstraint)]) {

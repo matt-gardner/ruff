@@ -15,15 +15,7 @@ use crate::{
         DefinedPlace, Definedness, Place, PlaceAndQualifiers, TypeOrigin, Widening,
         place_from_bindings, place_from_declarations,
     },
-    semantic_index::{
-        attribute_assignments, attribute_declarations, attribute_scopes,
-        definition::{Definition, DefinitionKind, DefinitionState, TargetKind},
-        place_table,
-        scope::{Scope, ScopeId},
-        semantic_index,
-        symbol::Symbol,
-        use_def_map,
-    },
+    reachability_constraints::{binding_reachability, evaluate_reachability_constraint},
     types::{
         ApplyTypeMappingVisitor, BoundTypeVarInstance, CallArguments, CallableType, ClassBase,
         ClassLiteral, ClassType, DATACLASS_FLAGS, DataclassFlags, DataclassParams, GenericAlias,
@@ -59,6 +51,15 @@ use crate::{
         variance::VarianceInferable,
         visitor::{TypeCollector, TypeVisitor, walk_type_with_recursion_guard},
     },
+};
+use ty_semantic_index::{
+    attribute_assignments, attribute_declarations, attribute_scopes,
+    definition::{Definition, DefinitionKind, DefinitionState, TargetKind},
+    place_table,
+    scope::{Scope, ScopeId},
+    semantic_index,
+    symbol::Symbol,
+    use_def_map,
 };
 
 /// Representation of a class definition statement in the AST: either a non-generic class, or a
@@ -1751,14 +1752,26 @@ impl<'db> StaticClassLiteral<'db> {
             // want to improve this, we could instead pass a definition-kind filter to the use-def map
             // query, or to the `symbol_from_declarations` call below. Doing so would potentially require
             // us to generate a union of `__init__` methods.
-            if declarations.clone().any_reachable(db, |declaration| {
-                declaration.is_defined_and(|declaration| {
-                    !matches!(
-                        declaration.kind(db),
-                        DefinitionKind::AnnotatedAssignment(..)
-                    )
+            if declarations
+                .clone()
+                .filter(|declaration| {
+                    declaration.declaration.is_defined_and(|declaration| {
+                        !matches!(
+                            declaration.kind(db),
+                            DefinitionKind::AnnotatedAssignment(..)
+                        )
+                    })
                 })
-            }) {
+                .any(|declaration| {
+                    !evaluate_reachability_constraint(
+                        db,
+                        declarations.reachability_constraints,
+                        declarations.predicates,
+                        declaration.reachability_constraint,
+                    )
+                    .is_always_false()
+                })
+            {
                 continue;
             }
 
@@ -2071,7 +2084,7 @@ impl<'db> StaticClassLiteral<'db> {
                         .reachable_symbol_bindings(method_place)
                         .find_map(|bind| {
                             (bind.binding.is_defined_and(|def| def == method))
-                                .then(|| class_map.binding_reachability(db, &bind))
+                                .then(|| binding_reachability(db, class_map, &bind))
                         })
                         .unwrap_or(Truthiness::AlwaysFalse)
                 } else {

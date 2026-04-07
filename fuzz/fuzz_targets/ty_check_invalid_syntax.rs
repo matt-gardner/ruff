@@ -19,9 +19,10 @@ use ty_module_resolver::{Db as ModuleResolverDb, SearchPathSettings};
 use ty_python_semantic::lint::LintRegistry;
 use ty_python_semantic::types::check_types;
 use ty_python_semantic::{
-    AnalysisSettings, Db as SemanticDb, FallibleStrategy, Program, ProgramSettings, PythonPlatform,
-    PythonVersionWithSource, default_lint_registry, lint::RuleSelection,
+    AnalysisSettings, Db as SemanticDb, default_lint_registry, lint::RuleSelection,
 };
+use ty_semantic_index::program::{FallibleStrategy, Program, ProgramSettings};
+use ty_site_packages::{PythonPlatform, PythonVersionWithSource};
 
 /// Database that can be used for testing.
 ///
@@ -91,11 +92,14 @@ impl ModuleResolverDb for TestDb {
 }
 
 #[salsa::db]
-impl SemanticDb for TestDb {
+impl ty_semantic_index::Db for TestDb {
     fn should_check_file(&self, file: File) -> bool {
         !file.path(self).is_vendored_path()
     }
+}
 
+#[salsa::db]
+impl SemanticDb for TestDb {
     fn rule_selection(&self, _file: File) -> &RuleSelection {
         &self.rule_selection
     }

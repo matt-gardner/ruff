@@ -112,7 +112,7 @@
 //! for the second use of `x`.
 //!
 //! So that's one question our use-def map needs to answer: given a specific use of a place, which
-//! binding(s) can reach that use. In [`AstIds`](crate::semantic_index::ast_ids::AstIds) we number
+//! binding(s) can reach that use. In [`crate::ast_ids::AstIds`] we number
 //! all uses (that means a `Name`/`ExprAttribute`/`ExprSubscript` node with `Load` context)
 //! so we have a `ScopedUseId` to efficiently represent each use.
 //!
@@ -187,7 +187,7 @@
 //!
 //! To build a [`UseDefMap`], the [`UseDefMapBuilder`] is notified of each new use, definition, and
 //! constraint as they are encountered by the
-//! [`SemanticIndexBuilder`](crate::semantic_index::builder::SemanticIndexBuilder) AST visit. For
+//! [`crate::builder::SemanticIndexBuilder`] AST visit. For
 //! each place, the builder tracks the `PlaceState` (`Bindings` and `Declarations`) for that place.
 //! When we hit a use or definition of a place, we record the necessary parts of the current state
 //! for that place that we need for that use or definition. When we reach the end of the scope, it
@@ -238,38 +238,38 @@
 //!
 //! The [`UseDefMapBuilder`] itself just exposes methods for taking a snapshot, resetting to a
 //! snapshot, and merging a snapshot into the current state. The logic using these methods lives in
-//! [`SemanticIndexBuilder`](crate::semantic_index::builder::SemanticIndexBuilder), e.g. where it
+//! [`SemanticIndexBuilder`](crate::builder::SemanticIndexBuilder), e.g. where it
 //! visits a `StmtIf` node.
 
 use ruff_index::{IndexVec, newtype_index};
 use ruff_text_size::TextRange;
 use rustc_hash::{FxBuildHasher, FxHashMap};
 
-use crate::place::BoundnessAnalysis;
-use crate::semantic_index::ast_ids::ScopedUseId;
-use crate::semantic_index::definition::{Definition, DefinitionState};
-use crate::semantic_index::member::ScopedMemberId;
-use crate::semantic_index::narrowing_constraints::{ConstraintKey, ScopedNarrowingConstraint};
-use crate::semantic_index::place::{PlaceExprRef, ScopedPlaceId};
-use crate::semantic_index::predicate::{
-    PredicateOrLiteral, Predicates, PredicatesBuilder, ScopedPredicateId,
+use crate::BoundnessAnalysis;
+use crate::PossiblyNarrowedPlaces;
+use crate::ast_ids::ScopedUseId;
+use crate::definition::{Definition, DefinitionState};
+use crate::member::ScopedMemberId;
+use crate::narrowing_constraints::{ConstraintKey, ScopedNarrowingConstraint};
+use crate::place::{PlaceExprRef, ScopedPlaceId};
+use crate::predicate::{PredicateOrLiteral, Predicates, PredicatesBuilder, ScopedPredicateId};
+use crate::reachability_constraints::ReachabilityConstraints;
+use crate::reachability_constraints::{
+    ReachabilityConstraintsBuilder, ScopedReachabilityConstraintId,
 };
-use crate::semantic_index::reachability_constraints::{
-    ReachabilityConstraints, ReachabilityConstraintsBuilder, ScopedReachabilityConstraintId,
-};
-use crate::semantic_index::scope::{FileScopeId, ScopeKind, ScopeLaziness};
-use crate::semantic_index::symbol::ScopedSymbolId;
-use crate::semantic_index::use_def::place_state::{
+use crate::scope::{FileScopeId, ScopeKind, ScopeLaziness};
+use crate::symbol::ScopedSymbolId;
+use crate::use_def::place_state::{
     Bindings, Declarations, EnclosingSnapshot, LiveBindingsIterator, LiveDeclaration,
     LiveDeclarationsIterator, PlaceState,
 };
-use crate::semantic_index::{EnclosingSnapshotResult, SemanticIndex};
-use crate::types::{PossiblyNarrowedPlaces, Truthiness, Type};
+use crate::{EnclosingSnapshotResult, SemanticIndex};
 
 mod place_state;
 
+pub use place_state::LiveBinding;
 pub(super) use place_state::PreviousDefinitions;
-pub(crate) use place_state::{LiveBinding, ScopedDefinitionId};
+pub(crate) use place_state::ScopedDefinitionId;
 
 /// Uniquely identifies an interned [`Bindings`] entry in [`UseDefMap::interned_bindings`].
 #[newtype_index]
@@ -302,7 +302,7 @@ enum InternedEnclosingSnapshotId {
 
 /// Applicable definitions and constraints for every use of a name.
 #[derive(Debug, PartialEq, Eq, salsa::Update, get_size2::GetSize)]
-pub(crate) struct UseDefMap<'db> {
+pub struct UseDefMap<'db> {
     /// Array of [`Definition`] in this scope. Only the first entry should be [`DefinitionState::Undefined`];
     /// this represents the implicit "unbound"/"undeclared" definition of every place.
     all_definitions: IndexVec<ScopedDefinitionId, DefinitionState<'db>>,
@@ -389,7 +389,7 @@ pub(crate) struct UseDefMap<'db> {
     ///
     /// Function `f` may implicitly return `None`, but `g` cannot.
     ///
-    /// This is used by [`UseDefMap::can_implicitly_return_none`].
+    /// This is used by `can_implicitly_return_none` in the `ty_python_semantic` crate.
     end_of_scope_reachability: ScopedReachabilityConstraintId,
 }
 
@@ -400,13 +400,33 @@ struct RangeInfo {
     in_type_checking_block: bool,
 }
 
-pub(crate) enum ApplicableConstraints<'map, 'db> {
+pub enum ApplicableConstraints<'map, 'db> {
     UnboundBinding(NarrowingEvaluator<'map, 'db>),
     ConstrainedBindings(BindingWithConstraintsIterator<'map, 'db>),
 }
 
 impl<'db> UseDefMap<'db> {
-    pub(crate) fn all_definitions_with_usage(
+    pub fn reachability_constraints(&self) -> &ReachabilityConstraints {
+        &self.reachability_constraints
+    }
+
+    pub fn predicates(&self) -> &Predicates<'db> {
+        &self.predicates
+    }
+
+    pub fn range_reachability(
+        &self,
+    ) -> impl Iterator<Item = (TextRange, ScopedReachabilityConstraintId)> + '_ {
+        self.range_reachability
+            .iter()
+            .map(|&(range, RangeInfo { reachability, .. })| (range, reachability))
+    }
+
+    pub fn end_of_scope_reachability(&self) -> ScopedReachabilityConstraintId {
+        self.end_of_scope_reachability
+    }
+
+    pub fn all_definitions_with_usage(
         &self,
     ) -> impl Iterator<Item = (ScopedDefinitionId, DefinitionState<'db>, bool)> + '_ {
         self.all_definitions
@@ -414,10 +434,7 @@ impl<'db> UseDefMap<'db> {
             .map(|(id, &state)| (id, state, self.used_bindings[id]))
     }
 
-    pub(crate) fn bindings_at_use(
-        &self,
-        use_id: ScopedUseId,
-    ) -> BindingWithConstraintsIterator<'_, 'db> {
+    pub fn bindings_at_use(&self, use_id: ScopedUseId) -> BindingWithConstraintsIterator<'_, 'db> {
         let bindings_id = self.bindings_by_use[use_id];
         self.bindings_iterator(
             &self.interned_bindings[bindings_id],
@@ -425,7 +442,7 @@ impl<'db> UseDefMap<'db> {
         )
     }
 
-    pub(crate) fn multi_bindings_at_use(
+    pub fn multi_bindings_at_use(
         &self,
         use_id: ScopedUseId,
     ) -> impl Iterator<Item = BindingWithConstraintsIterator<'_, 'db>> {
@@ -440,7 +457,7 @@ impl<'db> UseDefMap<'db> {
             .flatten()
     }
 
-    pub(crate) fn applicable_constraints(
+    pub fn applicable_constraints(
         &self,
         constraint_key: ConstraintKey,
         enclosing_scope: FileScopeId,
@@ -471,28 +488,11 @@ impl<'db> UseDefMap<'db> {
         }
     }
 
-    pub(crate) fn is_reachable(
-        &self,
-        db: &dyn crate::Db,
-        reachability: ScopedReachabilityConstraintId,
-    ) -> bool {
-        self.evaluate_reachability(db, reachability).may_be_true()
-    }
-
-    pub(crate) fn evaluate_reachability(
-        &self,
-        db: &dyn crate::Db,
-        reachability: ScopedReachabilityConstraintId,
-    ) -> crate::types::Truthiness {
-        self.reachability_constraints
-            .evaluate(db, &self.predicates, reachability)
-    }
-
-    pub(crate) fn definition(&self, id: ScopedDefinitionId) -> DefinitionState<'db> {
+    pub fn definition(&self, id: ScopedDefinitionId) -> DefinitionState<'db> {
         self.all_definitions[id]
     }
 
-    pub(crate) fn narrowing_evaluator(
+    pub fn narrowing_evaluator(
         &self,
         constraint: ScopedNarrowingConstraint,
     ) -> NarrowingEvaluator<'_, 'db> {
@@ -503,17 +503,6 @@ impl<'db> UseDefMap<'db> {
         }
     }
 
-    /// Check whether a diagnostic emitted at `range` is in reachable code within this scope.
-    pub(crate) fn is_range_reachable(&self, db: &dyn crate::Db, range: TextRange) -> bool {
-        !self
-            .range_reachability
-            .iter()
-            .take_while(|(entry_range, _)| entry_range.start() <= range.start())
-            .any(|&(entry_range, RangeInfo { reachability, .. })| {
-                entry_range.contains_range(range) && !self.is_reachable(db, reachability)
-            })
-    }
-
     pub(crate) fn is_range_in_type_checking_block(&self, range: TextRange) -> bool {
         self.range_reachability
             .iter()
@@ -522,8 +511,7 @@ impl<'db> UseDefMap<'db> {
                 block.in_type_checking_block && entry_range.contains_range(range)
             })
     }
-
-    pub(crate) fn end_of_scope_bindings(
+    pub fn end_of_scope_bindings(
         &self,
         place: ScopedPlaceId,
     ) -> BindingWithConstraintsIterator<'_, 'db> {
@@ -533,7 +521,7 @@ impl<'db> UseDefMap<'db> {
         }
     }
 
-    pub(crate) fn end_of_scope_symbol_bindings(
+    pub fn end_of_scope_symbol_bindings(
         &self,
         symbol: ScopedSymbolId,
     ) -> BindingWithConstraintsIterator<'_, 'db> {
@@ -543,7 +531,7 @@ impl<'db> UseDefMap<'db> {
         )
     }
 
-    pub(crate) fn end_of_scope_member_bindings(
+    pub fn end_of_scope_member_bindings(
         &self,
         member: ScopedMemberId,
     ) -> BindingWithConstraintsIterator<'_, 'db> {
@@ -554,7 +542,7 @@ impl<'db> UseDefMap<'db> {
         )
     }
 
-    pub(crate) fn reachable_bindings(
+    pub fn reachable_bindings(
         &self,
         place: ScopedPlaceId,
     ) -> BindingWithConstraintsIterator<'_, 'db> {
@@ -564,7 +552,7 @@ impl<'db> UseDefMap<'db> {
         }
     }
 
-    pub(crate) fn reachable_symbol_bindings(
+    pub fn reachable_symbol_bindings(
         &self,
         symbol: ScopedSymbolId,
     ) -> BindingWithConstraintsIterator<'_, 'db> {
@@ -572,7 +560,7 @@ impl<'db> UseDefMap<'db> {
         self.bindings_iterator(bindings, BoundnessAnalysis::AssumeBound)
     }
 
-    pub(crate) fn reachable_member_bindings(
+    pub fn reachable_member_bindings(
         &self,
         member: ScopedMemberId,
     ) -> BindingWithConstraintsIterator<'_, 'db> {
@@ -608,7 +596,7 @@ impl<'db> UseDefMap<'db> {
         }
     }
 
-    pub(crate) fn bindings_at_definition(
+    pub fn bindings_at_definition(
         &self,
         definition: Definition<'db>,
     ) -> BindingWithConstraintsIterator<'_, 'db> {
@@ -619,7 +607,7 @@ impl<'db> UseDefMap<'db> {
         )
     }
 
-    pub(crate) fn declarations_at_binding(
+    pub fn declarations_at_binding(
         &self,
         binding: Definition<'db>,
     ) -> DeclarationsIterator<'_, 'db> {
@@ -630,7 +618,7 @@ impl<'db> UseDefMap<'db> {
         )
     }
 
-    pub(crate) fn end_of_scope_declarations<'map>(
+    pub fn end_of_scope_declarations<'map>(
         &'map self,
         place: ScopedPlaceId,
     ) -> DeclarationsIterator<'map, 'db> {
@@ -640,7 +628,7 @@ impl<'db> UseDefMap<'db> {
         }
     }
 
-    pub(crate) fn end_of_scope_symbol_declarations<'map>(
+    pub fn end_of_scope_symbol_declarations<'map>(
         &'map self,
         symbol: ScopedSymbolId,
     ) -> DeclarationsIterator<'map, 'db> {
@@ -648,7 +636,7 @@ impl<'db> UseDefMap<'db> {
         self.declarations_iterator(declarations, BoundnessAnalysis::BasedOnUnboundVisibility)
     }
 
-    pub(crate) fn end_of_scope_member_declarations<'map>(
+    pub fn end_of_scope_member_declarations<'map>(
         &'map self,
         member: ScopedMemberId,
     ) -> DeclarationsIterator<'map, 'db> {
@@ -657,7 +645,7 @@ impl<'db> UseDefMap<'db> {
         self.declarations_iterator(declarations, BoundnessAnalysis::BasedOnUnboundVisibility)
     }
 
-    pub(crate) fn reachable_symbol_declarations(
+    pub fn reachable_symbol_declarations(
         &self,
         symbol: ScopedSymbolId,
     ) -> DeclarationsIterator<'_, 'db> {
@@ -665,7 +653,7 @@ impl<'db> UseDefMap<'db> {
         self.declarations_iterator(declarations, BoundnessAnalysis::AssumeBound)
     }
 
-    pub(crate) fn reachable_member_declarations(
+    pub fn reachable_member_declarations(
         &self,
         member: ScopedMemberId,
     ) -> DeclarationsIterator<'_, 'db> {
@@ -673,17 +661,14 @@ impl<'db> UseDefMap<'db> {
         self.declarations_iterator(declarations, BoundnessAnalysis::AssumeBound)
     }
 
-    pub(crate) fn reachable_declarations(
-        &self,
-        place: ScopedPlaceId,
-    ) -> DeclarationsIterator<'_, 'db> {
+    pub fn reachable_declarations(&self, place: ScopedPlaceId) -> DeclarationsIterator<'_, 'db> {
         match place {
             ScopedPlaceId::Symbol(symbol) => self.reachable_symbol_declarations(symbol),
             ScopedPlaceId::Member(member) => self.reachable_member_declarations(member),
         }
     }
 
-    pub(crate) fn all_end_of_scope_symbol_declarations<'map>(
+    pub fn all_end_of_scope_symbol_declarations<'map>(
         &'map self,
     ) -> impl Iterator<Item = (ScopedSymbolId, DeclarationsIterator<'map, 'db>)> + 'map {
         self.end_of_scope_symbols
@@ -691,7 +676,7 @@ impl<'db> UseDefMap<'db> {
             .map(|symbol_id| (symbol_id, self.end_of_scope_symbol_declarations(symbol_id)))
     }
 
-    pub(crate) fn all_end_of_scope_symbol_bindings<'map>(
+    pub fn all_end_of_scope_symbol_bindings<'map>(
         &'map self,
     ) -> impl Iterator<Item = (ScopedSymbolId, BindingWithConstraintsIterator<'map, 'db>)> + 'map
     {
@@ -700,7 +685,7 @@ impl<'db> UseDefMap<'db> {
             .map(|symbol_id| (symbol_id, self.end_of_scope_symbol_bindings(symbol_id)))
     }
 
-    pub(crate) fn all_reachable_symbols<'map>(
+    pub fn all_reachable_symbols<'map>(
         &'map self,
     ) -> impl Iterator<
         Item = (
@@ -721,26 +706,6 @@ impl<'db> UseDefMap<'db> {
                 );
                 (symbol_id, declarations, bindings)
             },
-        )
-    }
-
-    /// This function is intended to be called only once inside `TypeInferenceBuilder::infer_function_body`.
-    pub(crate) fn can_implicitly_return_none(&self, db: &dyn crate::Db) -> bool {
-        !self
-            .reachability_constraints
-            .evaluate(db, &self.predicates, self.end_of_scope_reachability)
-            .is_always_false()
-    }
-
-    pub(crate) fn binding_reachability(
-        &self,
-        db: &dyn crate::Db,
-        binding: &BindingWithConstraints<'_, 'db>,
-    ) -> Truthiness {
-        self.reachability_constraints.evaluate(
-            db,
-            &self.predicates,
-            binding.reachability_constraint,
         )
     }
 
@@ -804,11 +769,11 @@ pub(crate) struct EnclosingSnapshotKey {
 type EnclosingSnapshots = IndexVec<ScopedEnclosingSnapshotId, EnclosingSnapshot>;
 
 #[derive(Clone, Debug)]
-pub(crate) struct BindingWithConstraintsIterator<'map, 'db> {
+pub struct BindingWithConstraintsIterator<'map, 'db> {
     pub(crate) all_definitions: &'map IndexVec<ScopedDefinitionId, DefinitionState<'db>>,
-    pub(crate) predicates: &'map Predicates<'db>,
-    pub(crate) reachability_constraints: &'map ReachabilityConstraints,
-    pub(crate) boundness_analysis: BoundnessAnalysis,
+    pub predicates: &'map Predicates<'db>,
+    pub reachability_constraints: &'map ReachabilityConstraints,
+    pub boundness_analysis: BoundnessAnalysis,
     inner: LiveBindingsIterator<'map>,
 }
 
@@ -835,73 +800,45 @@ impl<'map, 'db> Iterator for BindingWithConstraintsIterator<'map, 'db> {
 
 impl std::iter::FusedIterator for BindingWithConstraintsIterator<'_, '_> {}
 
-pub(crate) struct BindingWithConstraints<'map, 'db> {
-    pub(crate) binding: DefinitionState<'db>,
-    pub(crate) narrowing_constraint: NarrowingEvaluator<'map, 'db>,
-    pub(crate) reachability_constraint: ScopedReachabilityConstraintId,
+pub struct BindingWithConstraints<'map, 'db> {
+    pub binding: DefinitionState<'db>,
+    pub narrowing_constraint: NarrowingEvaluator<'map, 'db>,
+    pub reachability_constraint: ScopedReachabilityConstraintId,
 }
 
-pub(crate) struct NarrowingEvaluator<'map, 'db> {
-    pub(crate) constraint: ScopedNarrowingConstraint,
+pub struct NarrowingEvaluator<'map, 'db> {
+    constraint: ScopedNarrowingConstraint,
     predicates: &'map Predicates<'db>,
     reachability_constraints: &'map ReachabilityConstraints,
 }
 
-impl<'db> NarrowingEvaluator<'_, 'db> {
-    pub(crate) fn narrow(
-        self,
-        db: &'db dyn crate::Db,
-        base_ty: Type<'db>,
-        place: ScopedPlaceId,
-    ) -> Type<'db> {
-        self.reachability_constraints.narrow_by_constraint(
-            db,
-            self.predicates,
-            self.constraint,
-            base_ty,
-            place,
-        )
+impl<'map, 'db> NarrowingEvaluator<'map, 'db> {
+    pub fn constraint(&self) -> ScopedNarrowingConstraint {
+        self.constraint
+    }
+
+    pub fn predicates(&self) -> &'map Predicates<'db> {
+        self.predicates
+    }
+
+    pub fn reachability_constraints(&self) -> &'map ReachabilityConstraints {
+        self.reachability_constraints
     }
 }
 
 #[derive(Clone)]
-pub(crate) struct DeclarationsIterator<'map, 'db> {
+pub struct DeclarationsIterator<'map, 'db> {
     all_definitions: &'map IndexVec<ScopedDefinitionId, DefinitionState<'db>>,
-    pub(crate) predicates: &'map Predicates<'db>,
-    pub(crate) reachability_constraints: &'map ReachabilityConstraints,
-    pub(crate) boundness_analysis: BoundnessAnalysis,
+    pub predicates: &'map Predicates<'db>,
+    pub reachability_constraints: &'map ReachabilityConstraints,
+    pub boundness_analysis: BoundnessAnalysis,
     inner: LiveDeclarationsIterator<'map>,
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct DeclarationWithConstraint<'db> {
-    pub(crate) declaration: DefinitionState<'db>,
-    pub(crate) reachability_constraint: ScopedReachabilityConstraintId,
-}
-
-impl<'db> DeclarationsIterator<'_, 'db> {
-    /// Returns `true` if `predicate` holds for at least one declaration whose
-    /// reachability constraint is not statically false.
-    pub(crate) fn any_reachable(
-        mut self,
-        db: &'db dyn crate::Db,
-        mut predicate: impl FnMut(DefinitionState<'db>) -> bool,
-    ) -> bool {
-        let predicates = self.predicates;
-        let reachability_constraints = self.reachability_constraints;
-
-        self.any(
-            |DeclarationWithConstraint {
-                 declaration,
-                 reachability_constraint,
-             }| {
-                predicate(declaration)
-                    && !reachability_constraints
-                        .evaluate(db, predicates, reachability_constraint)
-                        .is_always_false()
-            },
-        )
-    }
+pub struct DeclarationWithConstraint<'db> {
+    pub declaration: DefinitionState<'db>,
+    pub reachability_constraint: ScopedReachabilityConstraintId,
 }
 
 impl<'db> Iterator for DeclarationsIterator<'_, 'db> {

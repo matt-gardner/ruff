@@ -14,7 +14,8 @@ use std::sync::Arc;
 use tempfile::TempDir;
 use ty_module_resolver::{ModuleGlobSetBuilder, SearchPaths};
 use ty_python_semantic::lint::{LintRegistry, RuleSelection};
-use ty_python_semantic::{AnalysisSettings, Db as SemanticDb, Program, default_lint_registry};
+use ty_python_semantic::{AnalysisSettings, Db as SemanticDb, default_lint_registry};
+use ty_semantic_index::program::Program;
 
 use crate::config::Analysis;
 
@@ -153,11 +154,14 @@ impl ty_module_resolver::Db for Db {
 }
 
 #[salsa::db]
-impl SemanticDb for Db {
+impl ty_semantic_index::Db for Db {
     fn should_check_file(&self, file: File) -> bool {
         !file.path(self).is_vendored_path()
     }
+}
 
+#[salsa::db]
+impl SemanticDb for Db {
     fn rule_selection(&self, _file: File) -> &RuleSelection {
         &self.rule_selection
     }

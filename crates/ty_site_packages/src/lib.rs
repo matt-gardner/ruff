@@ -8,6 +8,7 @@
 //! reasonably ask us to type-check code assuming that the code runs
 //! on Linux.)
 
+mod platform;
 mod version;
 
 use std::io;
@@ -18,6 +19,7 @@ use std::{fmt, sync::Arc};
 
 use camino::Utf8Component;
 use indexmap::IndexSet;
+pub use platform::PythonPlatform;
 use ruff_annotate_snippets::{Level, Renderer, Snippet};
 use ruff_db::system::{System, SystemPath, SystemPathBuf};
 use ruff_python_ast::PythonVersion;

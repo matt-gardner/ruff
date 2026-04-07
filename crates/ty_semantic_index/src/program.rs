@@ -1,12 +1,11 @@
 use crate::Db;
-use crate::python_platform::PythonPlatform;
 
 use ruff_db::system::SystemPath;
 use ruff_python_ast::PythonVersion;
 use salsa::Durability;
 use salsa::Setter;
 use ty_module_resolver::SearchPaths;
-use ty_site_packages::PythonVersionWithSource;
+use ty_site_packages::{PythonPlatform, PythonVersionWithSource};
 
 // Re-export the misconfiguration strategy types from ty_module_resolver.
 pub use ty_module_resolver::{FallibleStrategy, MisconfigurationStrategy, UseDefaultStrategy};

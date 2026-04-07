@@ -51,6 +51,7 @@ tikv-jemallocator = { workspace = true }
 ruff_db = { workspace = true, features = ["testing"] }
 ruff_python_trivia = { workspace = true }
 ty_module_resolver = { workspace = true }
+ty_site_packages = { workspace = true }
 
 dunce = { workspace = true }
 filetime = { workspace = true }

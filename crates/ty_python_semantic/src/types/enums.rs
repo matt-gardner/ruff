@@ -6,13 +6,14 @@ use smallvec::SmallVec;
 use crate::{
     Db, FxIndexMap,
     place::{DefinedPlace, Place, place_from_bindings, place_from_declarations},
-    semantic_index::{definition::DefinitionKind, place_table, scope::ScopeId, use_def_map},
+    reachability_constraints::evaluate_reachability_constraint,
     types::{
         ClassBase, ClassLiteral, DynamicType, EnumLiteralType, KnownClass, LiteralValueTypeKind,
         MemberLookupPolicy, StaticClassLiteral, Type, function::FunctionType,
         set_theoretic::builder::UnionBuilder,
     },
 };
+use ty_semantic_index::{definition::DefinitionKind, place_table, scope::ScopeId, use_def_map};
 
 #[derive(Debug, PartialEq, Eq, salsa::Update)]
 pub(crate) struct EnumMetadata<'db> {
@@ -348,17 +349,28 @@ pub(crate) fn enum_metadata<'db>(
             let declarations = use_def_map.end_of_scope_symbol_declarations(symbol_id);
 
             if !explicit_member_wrapper
-                && declarations.clone().any_reachable(db, |declaration| {
-                    declaration.is_defined_and(|declaration| {
-                        !matches!(
-                            declaration.kind(db),
-                            DefinitionKind::AnnotatedAssignment(assignment)
-                                if assignment
-                                    .value(&parsed_module(db, declaration.file(db)).load(db))
-                                    .is_some()
-                        )
+                && declarations
+                    .clone()
+                    .filter(|declaration| {
+                        declaration.declaration.is_defined_and(|declaration| {
+                            !matches!(
+                                declaration.kind(db),
+                                DefinitionKind::AnnotatedAssignment(assignment)
+                                    if assignment
+                                        .value(&parsed_module(db, declaration.file(db)).load(db))
+                                        .is_some()
+                            )
+                        })
                     })
-                })
+                    .any(|declaration| {
+                        !evaluate_reachability_constraint(
+                            db,
+                            declarations.reachability_constraints,
+                            declarations.predicates,
+                            declaration.reachability_constraint,
+                        )
+                        .is_always_false()
+                    })
             {
                 return None;
             }
