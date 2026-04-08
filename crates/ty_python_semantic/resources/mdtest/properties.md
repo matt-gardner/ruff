@@ -136,6 +136,64 @@ c.my_property = 2
 c.my_property = "a"
 ```
 
+Direct `property.__set__` and `property.__delete__` calls return `None` for ordinary accessors, but
+preserve `Never`/`NoReturn` for typed non-returning accessors:
+
+```py
+from typing import Any, NoReturn, cast
+
+def raw_setter(obj: object, value: object) -> int:
+    return 1
+
+def raw_deleter(obj: object) -> int:
+    return 1
+
+prop = property(fset=cast(Any, raw_setter), fdel=cast(Any, raw_deleter))
+reveal_type(prop.__set__(object(), object()))  # revealed: None
+reveal_type(property.__set__(prop, object(), object()))  # revealed: None
+reveal_type(prop.__delete__(object()))  # revealed: None
+reveal_type(property.__delete__(prop, object()))  # revealed: None
+
+def never_setter(obj: object, value: object) -> NoReturn:
+    raise RuntimeError
+
+def never_deleter(obj: object) -> NoReturn:
+    raise RuntimeError
+
+never_setter_prop = property(fset=cast(Any, never_setter))
+reveal_type(never_setter_prop.__set__(object(), object()))  # revealed: None
+reveal_type(property.__set__(never_setter_prop, object(), object()))  # revealed: None
+
+never_deleter_prop = property(fdel=cast(Any, never_deleter))
+reveal_type(never_deleter_prop.__delete__(object()))  # revealed: None
+reveal_type(property.__delete__(never_deleter_prop, object()))  # revealed: None
+
+class NoReturnSetter:
+    @property
+    def x(self) -> int:
+        return 1
+
+    @x.setter
+    def x(self, value: int) -> NoReturn:
+        raise RuntimeError
+
+    @x.deleter
+    def x(self) -> NoReturn:
+        raise RuntimeError
+
+def direct_set() -> None:
+    reveal_type(NoReturnSetter.x.__set__(NoReturnSetter(), 1))  # revealed: Never
+
+def direct_set_unbound() -> None:
+    reveal_type(type(NoReturnSetter.x).__set__(NoReturnSetter.x, NoReturnSetter(), 1))  # revealed: Never
+
+def direct_delete() -> None:
+    reveal_type(NoReturnSetter.x.__delete__(NoReturnSetter()))  # revealed: Never
+
+def direct_delete_unbound() -> None:
+    reveal_type(type(NoReturnSetter.x).__delete__(NoReturnSetter.x, NoReturnSetter()))  # revealed: Never
+```
+
 ## Conditional redefinition in class body
 
 Distinct property definitions in statically unknown class-body branches should remain distinct, the
