@@ -201,6 +201,19 @@ def _(source: CheckWithWrongSignature):
     target: SupportsCheck = source  # error: [invalid-assignment]
 ```
 
+Missing protocol properties:
+
+```py
+class SupportsName(Protocol):
+    @property
+    def name(self) -> str: ...
+
+class DoesNotHaveName: ...
+
+def _(source: DoesNotHaveName):
+    target: SupportsName = source  # error: [invalid-assignment]
+```
+
 ## Type aliases
 
 Type aliases should be expanded in diagnostics to understand the underlying incompatibilities:
