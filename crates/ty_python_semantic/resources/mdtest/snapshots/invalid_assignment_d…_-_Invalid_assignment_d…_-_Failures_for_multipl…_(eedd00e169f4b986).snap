@@ -43,6 +43,5 @@ info: type `HasNeither` is not compatible with protocol `SupportsBar`
       ├── protocol member `bar` is not defined on type `HasNeither`
       ├── type `HasNeither` is not compatible with protocol `SupportsFoo`
       └── protocol member `foo` is not defined on type `HasNeither`
-info: rule `invalid-assignment` is enabled by default
 
 ```
