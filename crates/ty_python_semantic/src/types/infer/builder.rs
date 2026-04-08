@@ -2342,6 +2342,27 @@ impl<'db, 'ast> TypeInferenceBuilder<'db, 'ast> {
                                 &CallArguments::positional([meta_attr_ty, object_ty, value_ty]),
                             );
 
+                            let property_setter_returns_never = meta_attr_ty
+                                .as_property_instance()
+                                .is_some_and(|_| match &dunder_set_result {
+                                    Ok(result) => result.return_type(db).is_never(),
+                                    Err(err) => err.return_type(db).is_never(),
+                                });
+
+                            if property_setter_returns_never {
+                                if emit_diagnostics
+                                    && let Some(builder) =
+                                        self.context.report_lint(&INVALID_ASSIGNMENT, target)
+                                {
+                                    builder.into_diagnostic(format_args!(
+                                        "Cannot assign to attribute `{attribute}` on type `{}` \
+                                         whose `__set__` method returns `Never`/`NoReturn`",
+                                        object_ty.display(db),
+                                    ));
+                                }
+                                return false;
+                            }
+
                             if emit_diagnostics
                                 && let Err(dunder_set_failure) = dunder_set_result.as_ref()
                             {
@@ -2537,6 +2558,27 @@ impl<'db, 'ast> TypeInferenceBuilder<'db, 'ast> {
                                 db,
                                 &CallArguments::positional([meta_attr_ty, object_ty, value_ty]),
                             );
+
+                            let property_setter_returns_never = meta_attr_ty
+                                .as_property_instance()
+                                .is_some_and(|_| match &dunder_set_result {
+                                    Ok(result) => result.return_type(db).is_never(),
+                                    Err(err) => err.return_type(db).is_never(),
+                                });
+
+                            if property_setter_returns_never {
+                                if emit_diagnostics
+                                    && let Some(builder) =
+                                        self.context.report_lint(&INVALID_ASSIGNMENT, target)
+                                {
+                                    builder.into_diagnostic(format_args!(
+                                        "Cannot assign to attribute `{attribute}` on type `{}` \
+                                         whose `__set__` method returns `Never`/`NoReturn`",
+                                        object_ty.display(db),
+                                    ));
+                                }
+                                return false;
+                            }
 
                             if emit_diagnostics
                                 && let Err(dunder_set_failure) = dunder_set_result.as_ref()
@@ -2877,6 +2919,27 @@ impl<'db, 'ast> TypeInferenceBuilder<'db, 'ast> {
                         CallArguments::positional([object_ty]),
                         TypeContext::default(),
                     );
+
+                    let property_deleter_returns_never = attr_ty
+                        .as_property_instance()
+                        .is_some_and(|_| match &delete_dunder_call_result {
+                            Ok(result) => result.return_type(db).is_never(),
+                            Err(err) => err.return_type(db).is_some_and(|ty| ty.is_never()),
+                        });
+
+                    if property_deleter_returns_never {
+                        if emit_diagnostics
+                            && let Some(builder) =
+                                self.context.report_lint(&INVALID_ASSIGNMENT, target)
+                        {
+                            builder.into_diagnostic(format_args!(
+                                "Cannot delete attribute `{attribute}` on type `{}` \
+                                 whose `__delete__` method returns `Never`/`NoReturn`",
+                                object_ty.display(db),
+                            ));
+                        }
+                        return false;
+                    }
 
                     match delete_dunder_call_result {
                         Ok(_) | Err(CallDunderError::PossiblyUnbound(_)) => return true,
