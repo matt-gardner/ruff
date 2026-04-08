@@ -70,8 +70,8 @@ error[invalid-assignment]: Object of type `CheckWithWrongSignature` is not assig
 17 |     @property
    |
 info: type `CheckWithWrongSignature` is not compatible with protocol `SupportsCheck`
-info: ├── protocol member `check` is incompatible
-info: └── incompatible parameter types `bytes` and `str`
+info: └── protocol member `check` is incompatible
+info:     └── incompatible parameter types `bytes` and `str`
 
 ```
 

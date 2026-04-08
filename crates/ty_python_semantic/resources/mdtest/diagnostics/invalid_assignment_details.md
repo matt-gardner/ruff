@@ -279,6 +279,13 @@ def _(source: HasNeither):
     target: SupportsFoo | SupportsBar = source  # error: [invalid-assignment]
 ```
 
+## Failures for many union elements
+
+```py
+def _(source: int):
+    target: str | bytes | bool | None = source  # error: [invalid-assignment]
+```
+
 ## Invariant generic classes
 
 We show a special diagnostic hint for invariant generic classes. For example, if you try to assign a
