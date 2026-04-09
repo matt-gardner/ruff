@@ -2179,6 +2179,7 @@ impl<'db> TypeInferenceBuilder<'db, '_> {
             SpecialFormType::TypingSelf
             | SpecialFormType::TypeAlias
             | SpecialFormType::TypedDict
+            | SpecialFormType::TypedDictTop
             | SpecialFormType::Unknown
             | SpecialFormType::Any
             | SpecialFormType::NamedTuple => {
