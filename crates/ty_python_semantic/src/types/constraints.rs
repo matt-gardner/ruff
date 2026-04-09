@@ -507,10 +507,6 @@ impl<'db, 'c> ConstraintSet<'db, 'c> {
 
     /// Computes solutions for each BDD path, using a caller-provided hook to select solutions.
     ///
-    /// We only consider cycles among inferable typevars. Non-inferable typevars (e.g., from outer
-    /// scopes that appear due to BDD constraint reordering) are skipped during both cycle
-    /// detection and solution extraction.
-    ///
     /// The `choose` hook is called for each typevar on each BDD path with the typevar's
     /// materialized lower and upper bounds. It returns:
     /// - `Some(ty)` to use `ty` as the solution for this typevar on this path
@@ -518,19 +514,13 @@ impl<'db, 'c> ConstraintSet<'db, 'c> {
     ///
     /// For multi-path BDDs, the hook is called per-path. The caller is responsible for combining
     /// results across paths (typically via union).
-    pub(crate) fn solutions_with(
+    pub(crate) fn solutions(
         self,
         db: &'db dyn Db,
         builder: &'c ConstraintSetBuilder<'db>,
-        choose: impl FnMut(
-            BoundTypeVarInstance<'db>,
-            TypeVarVariance,
-            Type<'db>,
-            Type<'db>,
-        ) -> Result<Option<Type<'db>>, ()>,
     ) -> Solutions<'db> {
         self.verify_builder(builder);
-        self.node.solutions_with(db, builder, choose)
+        self.node.solutions(db, builder)
     }
 
     #[expect(dead_code)] // Keep this around for debugging purposes
@@ -1717,22 +1707,13 @@ impl NodeId {
         }
     }
 
-    fn solutions_with<'db>(
+    fn solutions<'db>(
         self,
         db: &'db dyn Db,
         builder: &ConstraintSetBuilder<'db>,
-        choose: impl FnMut(
-            BoundTypeVarInstance<'db>,
-            TypeVarVariance,
-            Type<'db>,
-            Type<'db>,
-        ) -> Result<Option<Type<'db>>, ()>,
     ) -> Solutions<'db> {
-        match self.node() {
-            Node::AlwaysTrue => Solutions::Unconstrained,
-            Node::AlwaysFalse => Solutions::Unsatisfiable,
-            Node::Interior(interior) => interior.solutions_with(db, builder, choose),
-        }
+        let path_bounds = PathBounds::compute(db, builder, self);
+        path_bounds.solve(db, builder)
     }
 
     /// Returns the negation of this BDD.
@@ -3488,21 +3469,6 @@ impl InteriorNode {
         result
     }
 
-    fn solutions_with<'db>(
-        self,
-        db: &'db dyn Db,
-        builder: &ConstraintSetBuilder<'db>,
-        choose: impl FnMut(
-            BoundTypeVarInstance<'db>,
-            TypeVarVariance,
-            Type<'db>,
-            Type<'db>,
-        ) -> Result<Option<Type<'db>>, ()>,
-    ) -> Solutions<'db> {
-        let path_bounds = PathBounds::compute(db, builder, self.node());
-        path_bounds.solve_with(choose)
-    }
-
     fn path_assignments(self, builder: &ConstraintSetBuilder<'_>) -> PathAssignments {
         // Sort the constraints in this BDD by their `source_order`s before adding them to the
         // sequent map. This ensures that constraints appear in the sequent map in a stable order.
@@ -3946,11 +3912,6 @@ impl InteriorNode {
 }
 
 /// The result of solving a constraint set for per-typevar specializations.
-///
-/// Generic over the container type `S`: cached solutions use
-/// `Ref<'c, Vec<Solution<'db>>>` (borrowed from the builder's cache), while
-/// hook-based solutions use `Vec<Solution<'db>>` (owned, since the hook makes
-/// caching inappropriate).
 #[derive(Debug)]
 pub(crate) enum Solutions<'db> {
     Unsatisfiable,
