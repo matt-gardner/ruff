@@ -33,6 +33,7 @@ class Iterable:
         return Iterator()
 
 [(a := b * 2) for b in Iterable()]
+# error: [possibly-unresolved-reference]
 reveal_type(a)  # revealed: int
 ```
 
@@ -48,6 +49,7 @@ class Iterable:
         return Iterator()
 
 [c for d in Iterable() if (c := d - 10) > 0]
+# error: [possibly-unresolved-reference]
 reveal_type(c)  # revealed: int
 ```
 
@@ -63,7 +65,9 @@ class Iterable:
         return Iterator()
 
 {(e := f * 2): (g := f * 3) for f in Iterable()}
+# error: [possibly-unresolved-reference]
 reveal_type(e)  # revealed: int
+# error: [possibly-unresolved-reference]
 reveal_type(g)  # revealed: int
 ```
 
@@ -78,8 +82,8 @@ class Iterable:
     def __iter__(self) -> Iterator:
         return Iterator()
 
-list(((h := i * 2) for i in Iterable()))
-reveal_type(h)  # revealed: int
+generator = ((h := i * 2) for i in Iterable())
+h  # error: [unresolved-reference]
 ```
 
 ### Class body comprehension
@@ -87,7 +91,7 @@ reveal_type(h)  # revealed: int
 ```py
 class C:
     [(x := y) for y in range(3)]
-    reveal_type(x)  # revealed: int
+    x  # error: [unresolved-reference]
 ```
 
 ### First generator `iter`
@@ -107,6 +111,7 @@ reveal_type(y)  # revealed: list[int]
 
 ```py
 [[(x := y) for y in range(3)] for _ in range(3)]
+# error: [possibly-unresolved-reference]
 reveal_type(x)  # revealed: int
 ```
 
@@ -156,12 +161,15 @@ def f() -> None:
 PEP 572: the walrus honors a `nonlocal` declaration in the enclosing scope.
 
 ```py
+def returns_str() -> str:
+    return "hello"
+
 def outer() -> None:
-    x = "hello"
+    x = returns_str()
 
     def inner() -> None:
         nonlocal x
         [(x := y) for y in range(3)]
-        reveal_type(x)  # revealed: int
+        reveal_type(x)  # revealed: int | str
     inner()
 ```

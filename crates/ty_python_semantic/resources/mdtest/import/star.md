@@ -491,12 +491,20 @@ reveal_type(s)  # revealed: Unknown
 # error: [unresolved-reference]
 reveal_type(t)  # revealed: Unknown
 
-# PEP 572: walrus targets in comprehensions leak into the enclosing scope.
+# PEP 572: walrus targets in eager comprehensions leak into the enclosing scope.
+# They are only conditionally defined, so `*` imports should surface that ambiguity too.
+# error: [possibly-unresolved-reference]
 reveal_type(g)  # revealed: int
+# error: [possibly-unresolved-reference]
 reveal_type(i)  # revealed: int
+# error: [possibly-unresolved-reference]
 reveal_type(k)  # revealed: int
+# error: [possibly-unresolved-reference]
 reveal_type(m)  # revealed: int
-reveal_type(o)  # revealed: int
+# Walruses in generator expressions do not leak out.
+# error: [unresolved-reference]
+reveal_type(o)  # revealed: Unknown
+# error: [possibly-unresolved-reference]
 reveal_type(q)  # revealed: int
 ```
 

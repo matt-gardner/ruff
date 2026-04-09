@@ -6180,10 +6180,9 @@ impl<'db, 'ast> TypeInferenceBuilder<'db, 'ast> {
             let db = self.db();
 
             if self.scope().node(db).scope_kind() == ScopeKind::Comprehension {
-                // PEP 572: walrus in comprehension binds in the enclosing scope.
-                // Infer the value via its standalone expression in this scope;
-                // the definition lives in the enclosing scope and will be
-                // inferred when that scope needs it.
+                // Infer the value via its standalone expression in this scope, where the
+                // iteration variables are visible. The target may leak to an enclosing
+                // eager-comprehension scope, or remain local for lazy/invalid cases.
                 let expression = self.index.expression(named.value.as_ref());
                 let result = infer_expression_types(db, expression, TypeContext::default());
                 self.extend_expression(result);
@@ -6216,11 +6215,10 @@ impl<'db, 'ast> TypeInferenceBuilder<'db, 'ast> {
 
         let add = self.add_binding(named.target.as_ref().into(), definition);
 
-        // PEP 572: walrus in a comprehension binds in the enclosing scope, but
-        // the value references comprehension-scoped variables. The builder
-        // registers the value as a standalone expression in the comprehension
-        // scope so we can infer it there. We must not `extend` the result
-        // because expression IDs are only meaningful within their own scope.
+        // The builder registers walrus values in comprehensions as standalone expressions in the
+        // comprehension scope so we can infer them where the iteration variables are visible. We
+        // must not `extend` the result because expression IDs are only meaningful within their
+        // own scope.
         let ty = if let Some(expression) = self.index.try_expression(value.as_ref()) {
             let result = infer_expression_types(self.db(), expression, add.type_context());
             result.expression_type(value.as_ref())

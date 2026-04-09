@@ -87,6 +87,7 @@ struct ScopeInfo {
     file_scope_id: FileScopeId,
     /// Current loop state; None if we are not currently visiting a loop
     current_loop: Option<Loop>,
+    deferred_outer_scope_merges: FxHashMap<FileScopeId, FlowSnapshot>,
 }
 
 pub(super) struct SemanticIndexBuilder<'db, 'ast> {
@@ -280,26 +281,42 @@ impl<'db, 'ast> SemanticIndexBuilder<'db, 'ast> {
         false
     }
 
-    /// Returns the enclosing non-comprehension scope for walrus operator targets,
-    /// per [PEP 572]. Named expressions in comprehensions bind in the first
-    /// enclosing scope that is *not* a comprehension.
+    /// Returns the enclosing non-comprehension scope for walrus operator targets
+    /// in eager comprehensions, per [PEP 572].
     ///
-    /// Returns `None` if the current scope is not a comprehension.
+    /// Returns `None` if the current scope is not a comprehension, if the walrus
+    /// is nested inside a generator expression (whose body is evaluated lazily),
+    /// or if the first enclosing non-comprehension scope is a class body
+    /// (where this is invalid syntax).
     ///
     /// [PEP 572]: https://peps.python.org/pep-0572/#scope-of-the-target
     fn enclosing_scope_for_walrus(&self) -> Option<(FileScopeId, usize)> {
-        if self.scopes[self.current_scope()].kind() != ScopeKind::Comprehension {
+        let mut scopes_rev = self.scope_stack.iter().enumerate().rev();
+        let (_, current_scope_info) = scopes_rev.next()?;
+        let current_scope = &self.scopes[current_scope_info.file_scope_id];
+
+        if current_scope.kind() != ScopeKind::Comprehension {
             return None;
         }
-        self.scope_stack
-            .iter()
-            .enumerate()
-            .rev()
-            .skip(1)
-            .find_map(|(index, info)| {
-                (self.scopes[info.file_scope_id].kind() != ScopeKind::Comprehension)
-                    .then_some((info.file_scope_id, index))
-            })
+
+        if matches!(
+            current_scope.node(),
+            NodeWithScopeKind::GeneratorExpression(_)
+        ) {
+            return None;
+        }
+
+        for (index, info) in scopes_rev {
+            let scope = &self.scopes[info.file_scope_id];
+            match scope.node() {
+                NodeWithScopeKind::GeneratorExpression(_) => return None,
+                NodeWithScopeKind::Class(_) => return None,
+                _ if scope.kind() == ScopeKind::Comprehension => continue,
+                _ => return Some((info.file_scope_id, index)),
+            }
+        }
+
+        None
     }
 
     /// Push a new loop, returning the outer loop, if any.
@@ -350,6 +367,7 @@ impl<'db, 'ast> SemanticIndexBuilder<'db, 'ast> {
         self.scope_stack.push(ScopeInfo {
             file_scope_id,
             current_loop: None,
+            deferred_outer_scope_merges: FxHashMap::default(),
         });
     }
 
@@ -651,6 +669,7 @@ impl<'db, 'ast> SemanticIndexBuilder<'db, 'ast> {
 
         let ScopeInfo {
             file_scope_id: popped_scope_id,
+            deferred_outer_scope_merges,
             ..
         } = self
             .scope_stack
@@ -666,6 +685,10 @@ impl<'db, 'ast> SemanticIndexBuilder<'db, 'ast> {
             self.record_eager_snapshots(popped_scope_id);
         } else {
             self.record_lazy_snapshots(popped_scope_id);
+        }
+
+        for (scope, snapshot) in deferred_outer_scope_merges {
+            self.use_def_maps[scope].merge(snapshot);
         }
 
         popped_scope_id
@@ -711,6 +734,21 @@ impl<'db, 'ast> SemanticIndexBuilder<'db, 'ast> {
 
     fn flow_merge(&mut self, state: FlowSnapshot) {
         self.current_use_def_map_mut().merge(state);
+    }
+
+    fn record_deferred_outer_scope_merge(&mut self, scope: FileScopeId) {
+        if self
+            .current_scope_info()
+            .deferred_outer_scope_merges
+            .contains_key(&scope)
+        {
+            return;
+        }
+
+        let snapshot = self.use_def_maps[scope].snapshot();
+        self.current_scope_info_mut()
+            .deferred_outer_scope_merges
+            .insert(scope, snapshot);
     }
 
     /// Add a symbol to the place table and the use-def map.
@@ -806,7 +844,11 @@ impl<'db, 'ast> SemanticIndexBuilder<'db, 'ast> {
             }
             Some(CurrentAssignment::Named(named)) => {
                 if let Some((enclosing_scope, scope_index)) = self.enclosing_scope_for_walrus() {
-                    // PEP 572: walrus in comprehension binds in enclosing scope.
+                    // PEP 572: walrus in an eager comprehension binds in the enclosing scope.
+                    // Defer restoration of the pre-comprehension outer state until this eager
+                    // scope exits. This keeps the binding definite for later expressions in the
+                    // current comprehension iteration, while still modeling the outer-scope
+                    // effect as conditional overall.
                     let target_name = named
                         .target
                         .as_name_expr()
@@ -818,6 +860,7 @@ impl<'db, 'ast> SemanticIndexBuilder<'db, 'ast> {
                     if added {
                         self.use_def_maps[enclosing_scope].add_place(symbol_id.into());
                     }
+                    self.record_deferred_outer_scope_merge(enclosing_scope);
                     self.push_additional_definition_in_scope(
                         enclosing_scope,
                         scope_index,
@@ -3188,10 +3231,10 @@ impl<'ast> Visitor<'ast> for SemanticIndexBuilder<'_, 'ast> {
 
                 // See https://peps.python.org/pep-0572/#differences-between-assignment-expressions-and-assignment-statements
                 if node.target.is_name_expr() {
-                    // PEP 572: walrus in comprehension binds in the enclosing scope.
-                    // Make the value a standalone expression so inference can evaluate
-                    // it in the comprehension scope where the iteration variables are visible.
-                    if self.enclosing_scope_for_walrus().is_some() {
+                    if self.scopes[self.current_scope()].kind() == ScopeKind::Comprehension {
+                        // Record the value as a standalone expression so inference can evaluate
+                        // it in the comprehension scope where the iteration variables are visible,
+                        // regardless of whether the target ultimately leaks outward.
                         self.add_standalone_expression(&node.value);
                     }
                     self.push_assignment(node.into());

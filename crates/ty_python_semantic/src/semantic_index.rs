@@ -861,6 +861,7 @@ mod tests {
 
     use crate::Db;
     use crate::db::tests::{TestDb, TestDbBuilder};
+    use crate::semantic_index::EnclosingSnapshotResult;
     use crate::semantic_index::ast_ids::{HasScopedUseId, ScopedUseId};
     use crate::semantic_index::definition::{Definition, DefinitionKind};
     use crate::semantic_index::place::PlaceTable;
@@ -1258,6 +1259,46 @@ def f(a: str, /, b: str, c: int = 1, *args, d: int = 2, **kwargs):
                 DefinitionKind::Comprehension(_)
             ));
         }
+    }
+
+    #[test]
+    fn walrus_in_comprehension_records_global_eager_snapshot() {
+        let TestCase { db, file } = test_case(
+            "
+[c for d in iter1 if (c := d) > 0]
+",
+        );
+
+        let index = semantic_index(&db, file);
+        let [(comprehension_scope_id, _)] = index
+            .child_scopes(FileScopeId::global())
+            .collect::<Vec<_>>()[..]
+        else {
+            panic!("expected one child scope")
+        };
+
+        let global_table = index.place_table(FileScopeId::global());
+        assert!(global_table.symbol_id("c").is_some());
+
+        let comprehension_table = index.place_table(comprehension_scope_id);
+        let c =
+            comprehension_table.symbol(comprehension_table.symbol_id("c").expect("symbol exists"));
+
+        let EnclosingSnapshotResult::FoundBindings(mut bindings) =
+            index.enclosing_snapshot(FileScopeId::global(), c.into(), comprehension_scope_id)
+        else {
+            panic!("expected a global eager snapshot for walrus target")
+        };
+
+        let first = bindings.next().expect("expected a binding");
+        assert!(first.binding.definition().is_some());
+        assert!(bindings.all(|binding| binding.binding.definition().is_some()));
+
+        let binding = first.binding.definition().expect("expected a definition");
+        assert!(matches!(
+            binding.kind(&db),
+            DefinitionKind::NamedExpression(_)
+        ));
     }
 
     /// Test case to validate that the `x` variable used in the comprehension is referencing the
